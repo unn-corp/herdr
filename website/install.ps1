@@ -213,14 +213,14 @@ function Set-ManagedJunction {
             if ($existingTarget.Equals($TargetPath, [System.StringComparison]::OrdinalIgnoreCase)) {
                 return
             }
-            Remove-Item -LiteralPath $LinkPath -Force
+            Remove-Item -LiteralPath $LinkPath -Recurse -Force
         } elseif ($item.PSIsContainer) {
             if ((Get-ChildItem -LiteralPath $LinkPath -Force | Select-Object -First 1) -ne $null) {
                 if (-not (Move-LegacyHerdrBinDirectory -Path $LinkPath -AllowMigration $AllowLegacyHerdrBinMigration)) {
                     throw "Refusing to replace non-empty directory at $LinkPath with a junction."
                 }
             } else {
-                Remove-Item -LiteralPath $LinkPath -Force
+                Remove-Item -LiteralPath $LinkPath -Recurse -Force
             }
         } else {
             throw "Refusing to replace file at $LinkPath with a junction."
@@ -242,7 +242,11 @@ function Move-LegacyHerdrBinDirectory {
     }
 
     $entries = @(Get-ChildItem -LiteralPath $Path -Force)
-    if ($entries.Count -ne 1 -or $entries[0].PSIsContainer -or $entries[0].Name -ine "herdr.exe") {
+    if (($entries | Where-Object { $_.PSIsContainer } | Select-Object -First 1) -ne $null) {
+        return $false
+    }
+
+    if (($entries | Where-Object { $_.Name -ieq "herdr.exe" } | Select-Object -First 1) -eq $null) {
         return $false
     }
 
