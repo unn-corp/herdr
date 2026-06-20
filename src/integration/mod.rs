@@ -12,7 +12,7 @@ pub(crate) const HERDR_TAB_ID_ENV_VAR: &str = "HERDR_TAB_ID";
 pub(crate) const HERDR_WORKSPACE_ID_ENV_VAR: &str = "HERDR_WORKSPACE_ID";
 const PI_EXTENSION_INSTALL_NAME: &str = "herdr-agent-state.ts";
 const PI_EXTENSION_ASSET: &str = include_str!("assets/pi/herdr-agent-state.ts");
-const PI_INTEGRATION_VERSION: u32 = 2;
+const PI_INTEGRATION_VERSION: u32 = 3;
 const OMP_EXTENSION_INSTALL_NAME: &str = "herdr-omp-agent-state.ts";
 const OMP_EXTENSION_ASSET: &str = include_str!("assets/omp/herdr-agent-state.ts");
 const OMP_INTEGRATION_VERSION: u32 = 3;
@@ -27,7 +27,7 @@ const CLAUDE_HOOK_ASSET: &str = if cfg!(windows) {
 } else {
     include_str!("assets/claude/herdr-agent-state.sh")
 };
-const CLAUDE_INTEGRATION_VERSION: u32 = 6;
+const CLAUDE_INTEGRATION_VERSION: u32 = 7;
 const CLAUDE_CONFIG_DIR_ENV_VAR: &str = "CLAUDE_CONFIG_DIR";
 const CODEX_HOOK_INSTALL_NAME: &str = if cfg!(windows) {
     "herdr-agent-state.ps1"
@@ -39,7 +39,7 @@ const CODEX_HOOK_ASSET: &str = if cfg!(windows) {
 } else {
     include_str!("assets/codex/herdr-agent-state.sh")
 };
-const CODEX_INTEGRATION_VERSION: u32 = 5;
+const CODEX_INTEGRATION_VERSION: u32 = 6;
 const CODEX_HOME_ENV_VAR: &str = "CODEX_HOME";
 const KIMI_HOOK_INSTALL_NAME: &str = if cfg!(windows) {
     "herdr-agent-state.ps1"
@@ -51,12 +51,12 @@ const KIMI_HOOK_ASSET: &str = if cfg!(windows) {
 } else {
     include_str!("assets/kimi/herdr-agent-state.sh")
 };
-const KIMI_INTEGRATION_VERSION: u32 = 3;
+const KIMI_INTEGRATION_VERSION: u32 = 4;
 const KIMI_CODE_HOME_ENV_VAR: &str = "KIMI_CODE_HOME";
 const KIMI_CONFIG_BLOCK_BEGIN: &str = "# >>> herdr kimi integration";
 const KIMI_CONFIG_BLOCK_END: &str = "# <<< herdr kimi integration";
 const KIMI_MIN_VERSION: &str = "0.14.0";
-const KIMI_HOOK_EVENTS: [(&str, &str); 10] = [
+const KIMI_HOOK_EVENTS: [(&str, &str); 9] = [
     ("SessionStart", "session"),
     ("UserPromptSubmit", "working"),
     ("PreToolUse", "working"),
@@ -66,7 +66,6 @@ const KIMI_HOOK_EVENTS: [(&str, &str); 10] = [
     ("PermissionResult", "working"),
     ("Stop", "idle"),
     ("Interrupt", "idle"),
-    ("SessionEnd", "release"),
 ];
 const COPILOT_HOOK_INSTALL_NAME: &str = if cfg!(windows) {
     "herdr-agent-state.ps1"
@@ -136,16 +135,16 @@ const DROID_REMOVED_LIFECYCLE_HOOK_EVENTS: [(&str, &str); 9] = [
 ];
 const OPENCODE_PLUGIN_INSTALL_NAME: &str = "herdr-agent-state.js";
 const OPENCODE_PLUGIN_ASSET: &str = include_str!("assets/opencode/herdr-agent-state.js");
-const OPENCODE_INTEGRATION_VERSION: u32 = 5;
+const OPENCODE_INTEGRATION_VERSION: u32 = 6;
 const KILO_PLUGIN_INSTALL_NAME: &str = "herdr-agent-state.js";
 const KILO_PLUGIN_ASSET: &str = include_str!("assets/kilo/herdr-agent-state.js");
-const KILO_INTEGRATION_VERSION: u32 = 1;
+const KILO_INTEGRATION_VERSION: u32 = 2;
 const HERMES_PLUGIN_INSTALL_NAME: &str = "herdr-agent-state";
 const HERMES_PLUGIN_MANIFEST_INSTALL_NAME: &str = "plugin.yaml";
 const HERMES_PLUGIN_INIT_INSTALL_NAME: &str = "__init__.py";
 const HERMES_PLUGIN_MANIFEST_ASSET: &str = include_str!("assets/hermes/plugin.yaml");
 const HERMES_PLUGIN_INIT_ASSET: &str = include_str!("assets/hermes/__init__.py");
-const HERMES_INTEGRATION_VERSION: u32 = 2;
+const HERMES_INTEGRATION_VERSION: u32 = 3;
 const QODERCLI_HOOK_INSTALL_NAME: &str = if cfg!(windows) {
     "herdr-agent-state.ps1"
 } else {
@@ -4434,7 +4433,7 @@ mod tests {
 
         assert_eq!(claude.path, hook_path);
         assert_eq!(claude.installed_version, Some(1));
-        assert_eq!(claude.expected_version, 6);
+        assert_eq!(claude.expected_version, 7);
         assert_eq!(claude.state, IntegrationStatusKind::Outdated);
 
         std::env::remove_var("HOME");
@@ -4464,7 +4463,7 @@ mod tests {
 
         assert_eq!(claude.path, hook_path);
         assert_eq!(claude.installed_version, Some(2));
-        assert_eq!(claude.expected_version, 6);
+        assert_eq!(claude.expected_version, 7);
         assert_eq!(claude.state, IntegrationStatusKind::Outdated);
 
         std::env::remove_var("HOME");
@@ -4597,7 +4596,7 @@ mod tests {
 
         assert_eq!(codex.path, hook_path);
         assert_eq!(codex.installed_version, Some(2));
-        assert_eq!(codex.expected_version, 5);
+        assert_eq!(codex.expected_version, 6);
         assert_eq!(codex.state, IntegrationStatusKind::Outdated);
 
         std::env::remove_var("HOME");
@@ -5966,28 +5965,66 @@ mod tests {
 
     #[test]
     fn bundled_integration_assets_report_session_refs() {
-        assert!(PI_EXTENSION_ASSET.contains("agent_session_path: currentAgentSessionPath"));
-        assert!(PI_EXTENSION_ASSET.contains("agent_session_id: currentAgentSessionId"));
-        assert!(PI_EXTENSION_ASSET.contains("publishState(true)"));
-        assert!(OMP_EXTENSION_ASSET.contains("agent_session_path: currentAgentSessionPath"));
-        assert!(OMP_EXTENSION_ASSET.contains("agent_session_id: currentAgentSessionId"));
-        assert!(OMP_EXTENSION_ASSET.contains("publishState(true)"));
-        assert!(CLAUDE_HOOK_ASSET.contains("agent_session_id"));
-        assert!(CLAUDE_HOOK_ASSET.contains("agent_session_path"));
-        assert!(CLAUDE_HOOK_ASSET.contains("session_start_source"));
-        assert!(CLAUDE_HOOK_ASSET.contains("pane.report_agent_session"));
+        assert!(PI_EXTENSION_ASSET.contains("agent_session_path"));
+        assert!(PI_EXTENSION_ASSET.contains("agent_session_id"));
+        assert!(PI_EXTENSION_ASSET.contains("ctx?.hasUI !== true"));
+        assert!(PI_EXTENSION_ASSET.contains("pane.report_agent_session"));
+        assert!(PI_EXTENSION_ASSET.contains("pane.report_agent\""));
+        assert!(PI_EXTENSION_ASSET.contains("pi.on(\"agent_start\""));
+        assert!(PI_EXTENSION_ASSET.contains("pi.on(\"agent_end\""));
+        assert!(!PI_EXTENSION_ASSET.contains("pane.release_agent"));
+        assert!(!PI_EXTENSION_ASSET.contains("session_shutdown"));
+        assert!(OMP_EXTENSION_ASSET.contains("agent_session_path"));
+        assert!(OMP_EXTENSION_ASSET.contains("agent_session_id"));
+        assert!(OMP_EXTENSION_ASSET.contains("ctx?.hasUI !== true"));
+        assert!(OMP_EXTENSION_ASSET.contains("pane.report_agent_session"));
+        assert!(OMP_EXTENSION_ASSET.contains("pane.report_agent\""));
+        assert!(OMP_EXTENSION_ASSET.contains("pi.on(\"agent_start\""));
+        assert!(OMP_EXTENSION_ASSET.contains("pi.on(\"agent_end\""));
+        assert!(!OMP_EXTENSION_ASSET.contains("pane.release_agent"));
+        assert!(!OMP_EXTENSION_ASSET.contains("session_shutdown"));
+        assert!(
+            CLAUDE_HOOK_ASSET.contains("agent_session_id")
+                || CLAUDE_HOOK_ASSET.contains("--agent-session-id")
+        );
+        assert!(
+            CLAUDE_HOOK_ASSET.contains("agent_session_path")
+                || CLAUDE_HOOK_ASSET.contains("--agent-session-path")
+        );
+        assert!(CLAUDE_HOOK_ASSET.contains("agent_id"));
+        assert!(
+            CLAUDE_HOOK_ASSET.contains("session_start_source")
+                || CLAUDE_HOOK_ASSET.contains("--session-start-source")
+        );
+        assert!(
+            CLAUDE_HOOK_ASSET.contains("pane.report_agent_session")
+                || CLAUDE_HOOK_ASSET.contains("report-agent-session")
+        );
         assert!(!CLAUDE_HOOK_ASSET.contains("\"state\": action"));
         assert!(!CLAUDE_HOOK_ASSET.contains("pane.release_agent"));
-        assert!(CODEX_HOOK_ASSET.contains("HERDR_HOOK_INPUT_FILE"));
-        assert!(CODEX_HOOK_ASSET.contains("agent_session_id"));
-        assert!(CODEX_HOOK_ASSET.contains("pane.report_agent_session"));
+        assert!(
+            CODEX_HOOK_ASSET.contains("HERDR_HOOK_INPUT_FILE")
+                || CODEX_HOOK_ASSET.contains("In.ReadToEnd")
+        );
+        assert!(
+            CODEX_HOOK_ASSET.contains("agent_session_id")
+                || CODEX_HOOK_ASSET.contains("--agent-session-id")
+        );
+        assert!(
+            CODEX_HOOK_ASSET.contains("session_start_source")
+                || CODEX_HOOK_ASSET.contains("--session-start-source")
+        );
+        assert!(
+            CODEX_HOOK_ASSET.contains("pane.report_agent_session")
+                || CODEX_HOOK_ASSET.contains("report-agent-session")
+        );
         assert!(!CODEX_HOOK_ASSET.contains("\"state\": action"));
         assert!(!CODEX_HOOK_ASSET.contains("pane.release_agent"));
         assert!(KIMI_HOOK_ASSET.contains("source = \"herdr:kimi\""));
         assert!(KIMI_HOOK_ASSET.contains("agent_session_id"));
         assert!(KIMI_HOOK_ASSET.contains("pane.report_agent_session"));
         assert!(KIMI_HOOK_ASSET.contains("\"state\": action"));
-        assert!(KIMI_HOOK_ASSET.contains("pane.release_agent"));
+        assert!(!KIMI_HOOK_ASSET.contains("pane.release_agent"));
         assert!(COPILOT_HOOK_ASSET.contains("agent_session_id"));
         assert!(COPILOT_HOOK_ASSET.contains("pane.report_agent_session"));
         assert!(!COPILOT_HOOK_ASSET.contains("\"state\":"));
@@ -6006,16 +6043,18 @@ mod tests {
         assert!(OPENCODE_PLUGIN_ASSET.contains("params.agent_session_id = sessionID"));
         assert!(OPENCODE_PLUGIN_ASSET.contains("pane.report_agent_session"));
         assert!(OPENCODE_PLUGIN_ASSET.contains("reportState"));
-        assert!(OPENCODE_PLUGIN_ASSET.contains("pane.release_agent"));
+        assert!(!OPENCODE_PLUGIN_ASSET.contains("pane.release_agent"));
         assert!(KILO_PLUGIN_ASSET.contains("SOURCE = \"herdr:kilo\""));
         assert!(KILO_PLUGIN_ASSET.contains("AGENT = \"kilo\""));
         assert!(KILO_PLUGIN_ASSET.contains("pane.report_agent_session"));
         assert!(KILO_PLUGIN_ASSET.contains("reportState"));
-        assert!(KILO_PLUGIN_ASSET.contains("pane.release_agent"));
+        assert!(!KILO_PLUGIN_ASSET.contains("pane.release_agent"));
         assert!(HERMES_PLUGIN_INIT_ASSET.contains("session_id = _session_id(kwargs)"));
         assert!(HERMES_PLUGIN_INIT_ASSET.contains("agent_session_id"));
         assert!(HERMES_PLUGIN_INIT_ASSET.contains("pane.report_agent\","));
-        assert!(HERMES_PLUGIN_INIT_ASSET.contains("pane.release_agent"));
+        assert!(HERMES_PLUGIN_INIT_ASSET.contains("on_session_end"));
+        assert!(!HERMES_PLUGIN_INIT_ASSET.contains("on_session_finalize"));
+        assert!(!HERMES_PLUGIN_INIT_ASSET.contains("pane.release_agent"));
         assert!(QODERCLI_HOOK_ASSET.contains("HERDR_HOOK_INPUT_FILE"));
         assert!(QODERCLI_HOOK_ASSET.contains("agent_session_id"));
         assert!(QODERCLI_HOOK_ASSET.contains("pane.report_agent_session"));
@@ -6035,26 +6074,19 @@ mod tests {
     }
 
     #[test]
-    fn omp_root_session_guard_is_instance_scoped() {
-        let export_start = OMP_EXTENSION_ASSET
-            .find("export default function (pi)")
-            .expect("omp extension exports a function");
-        let root_session_decl = OMP_EXTENSION_ASSET
-            .find("let rootSession = false")
-            .expect("omp extension declares root session guard");
+    fn omp_session_hook_ignores_non_ui_sessions() {
         let session_start_handler = OMP_EXTENSION_ASSET
             .find("pi.on(\"session_start\"")
             .expect("omp extension registers session_start handler");
+        let non_ui_guard = OMP_EXTENSION_ASSET
+            .find("ctx?.hasUI !== true")
+            .expect("omp extension checks UI context");
+        let session_report = OMP_EXTENSION_ASSET
+            .find("void reportSession()")
+            .expect("omp extension reports root session");
 
-        assert_eq!(
-            OMP_EXTENSION_ASSET
-                .matches("let rootSession = false")
-                .count(),
-            1
-        );
-        assert!(OMP_EXTENSION_ASSET.contains("rootSession = ctx?.hasUI === true"));
-        assert!(export_start < root_session_decl);
-        assert!(root_session_decl < session_start_handler);
+        assert!(session_start_handler < non_ui_guard);
+        assert!(non_ui_guard < session_report);
     }
 
     #[test]

@@ -2,7 +2,7 @@
 // managed by herdr; reinstalling or updating the integration overwrites this file.
 // add custom hooks/plugins beside this file instead of editing it.
 // HERDR_INTEGRATION_ID=opencode
-// HERDR_INTEGRATION_VERSION=5
+// HERDR_INTEGRATION_VERSION=6
 
 import net from "node:net";
 
@@ -96,10 +96,6 @@ function reportState(state, sessionID) {
   return request("pane.report_agent", params);
 }
 
-function releaseAgent() {
-  return request("pane.release_agent", {});
-}
-
 export const HerdrAgentStatePlugin = async () => {
   if (
     process.env.HERDR_ENV !== "1" ||
@@ -149,7 +145,6 @@ export const HerdrAgentStatePlugin = async () => {
           await reportState("idle", sessionID);
           break;
         case "session.deleted":
-          await releaseAgent();
           break;
         default:
           break;
