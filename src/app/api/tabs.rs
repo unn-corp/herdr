@@ -292,29 +292,13 @@ fn tab_not_found(id: String, tab_id: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::super::test_support::{exiting_test_command, shutdown_test_runtimes};
     use super::*;
     use crate::{
         api::schema::SuccessResponse,
         config::{Config, ShellModeConfig},
         workspace::Workspace,
     };
-
-    #[cfg(windows)]
-    fn exiting_test_command() -> &'static str {
-        "C:\\Windows\\System32\\whoami.exe"
-    }
-
-    #[cfg(not(windows))]
-    fn exiting_test_command() -> &'static str {
-        "/usr/bin/true"
-    }
-
-    fn shutdown_test_runtimes(app: &mut App) {
-        let runtimes: Vec<_> = app.terminal_runtimes.drain().collect();
-        for (_terminal_id, runtime) in runtimes {
-            runtime.shutdown();
-        }
-    }
 
     #[test]
     fn api_tab_move_reorders_tabs_in_target_workspace() {

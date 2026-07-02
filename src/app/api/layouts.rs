@@ -586,22 +586,13 @@ fn validate_layout_node(
 
 #[cfg(test)]
 mod tests {
+    use super::super::test_support::{exiting_test_command, shutdown_test_runtimes};
     use super::*;
     use crate::{
         api::schema::{ErrorResponse, ResponseResult, SuccessResponse},
         config::{Config, ShellModeConfig},
         workspace::Workspace,
     };
-
-    #[cfg(windows)]
-    fn exiting_test_command() -> &'static str {
-        "C:\\Windows\\System32\\whoami.exe"
-    }
-
-    #[cfg(not(windows))]
-    fn exiting_test_command() -> &'static str {
-        "/usr/bin/true"
-    }
 
     fn app_with_workspace() -> App {
         let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -619,13 +610,6 @@ mod tests {
         app.state.selected = 0;
         app.state.ensure_test_terminals();
         app
-    }
-
-    fn shutdown_test_runtimes(app: &mut App) {
-        let runtimes: Vec<_> = app.terminal_runtimes.drain().collect();
-        for (_terminal_id, runtime) in runtimes {
-            runtime.shutdown();
-        }
     }
 
     #[test]

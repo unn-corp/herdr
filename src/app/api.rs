@@ -1158,6 +1158,27 @@ fn agent_manifest_info(
 }
 
 #[cfg(test)]
+pub(super) mod test_support {
+    pub(crate) fn exiting_test_command() -> &'static str {
+        #[cfg(windows)]
+        {
+            "C:\\Windows\\System32\\whoami.exe"
+        }
+        #[cfg(not(windows))]
+        {
+            "/usr/bin/true"
+        }
+    }
+
+    pub(crate) fn shutdown_test_runtimes(app: &mut crate::app::App) {
+        let runtimes: Vec<_> = app.terminal_runtimes.drain().collect();
+        for (_terminal_id, runtime) in runtimes {
+            runtime.shutdown();
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::detect::{Agent, AgentState};
