@@ -13,6 +13,9 @@ use unicode_width::UnicodeWidthStr;
 use crate::layout::PaneId;
 use crate::protocol::CellData;
 
+#[cfg(windows)]
+mod windows_recent_fallback;
+
 use super::cursor::{CursorPositionSettleState, DecscusrTracker, CURSOR_POSITION_SETTLE};
 use super::{
     input::{
@@ -120,6 +123,8 @@ pub(crate) struct GhosttyPaneTerminal {
 
 pub(crate) struct GhosttyPaneCore {
     pub terminal: crate::ghostty::Terminal,
+    #[cfg(windows)]
+    recent_fallback: windows_recent_fallback::Cache,
     pub render_state: crate::ghostty::RenderState,
     pub kitty_keyboard: KittyKeyboardTracker,
     pub initial_default_foreground: Option<crate::ghostty::RgbColor>,
@@ -379,6 +384,8 @@ impl GhosttyPaneTerminal {
         Ok(Self {
             core: Mutex::new(GhosttyPaneCore {
                 terminal,
+                #[cfg(windows)]
+                recent_fallback: windows_recent_fallback::Cache::default(),
                 render_state,
                 kitty_keyboard: KittyKeyboardTracker::default(),
                 initial_default_foreground,
@@ -576,6 +583,8 @@ impl GhosttyPaneTerminal {
             xtgettcap_responses,
             &mut terminal_responses,
         );
+        #[cfg(windows)]
+        windows_recent_fallback::update(&mut core);
         crate::render_prof::duration_since("pty.ghostty_write", write_started);
 
         let has_kitty_graphics_sequence = crate::kitty_graphics::is_enabled()
@@ -693,6 +702,8 @@ impl GhosttyPaneTerminal {
             return;
         };
         core.terminal.write(ansi.as_bytes());
+        #[cfg(windows)]
+        windows_recent_fallback::update(&mut core);
         if let Ok(mut key_encoder) = self.key_encoder.lock() {
             key_encoder.set_from_terminal(&core.terminal);
         }
@@ -1710,33 +1721,34 @@ fn ghostty_recent_text(
     core: &GhosttyPaneCore,
     lines: usize,
 ) -> Result<String, crate::ghostty::Error> {
-    let total_rows = core.terminal.total_rows()?;
-    let cols = core.terminal.cols()?;
-    if total_rows == 0 || cols == 0 {
-        return Ok(String::new());
+    let text = ghostty_recent_text_for_terminal(&core.terminal, lines)?;
+    #[cfg(windows)]
+    {
+        if text.trim().is_empty() {
+            let fallback = windows_recent_fallback::recent_text(core, lines, false);
+            if !fallback.trim().is_empty() {
+                return Ok(fallback);
+            }
+        }
     }
-    let start = total_rows.saturating_sub(lines);
-    let mut rows = Vec::with_capacity(total_rows.saturating_sub(start));
-    for y in start..total_rows {
-        rows.push(ghostty_screen_row(core, cols, y as u32)?);
-    }
-    trim_trailing_blank_rows(&mut rows);
-    Ok(recent_text_from_rows(&rows, lines))
+    Ok(text)
 }
 
 fn ghostty_recent_text_unwrapped(
     core: &GhosttyPaneCore,
     lines: usize,
 ) -> Result<String, crate::ghostty::Error> {
-    let total_rows = core.terminal.total_rows()?;
-    let cols = core.terminal.cols()?;
-    if total_rows == 0 || cols == 0 {
-        return Ok(String::new());
+    let text = ghostty_recent_text_unwrapped_for_terminal(&core.terminal, lines)?;
+    #[cfg(windows)]
+    {
+        if text.trim().is_empty() {
+            let fallback = windows_recent_fallback::recent_text(core, lines, true);
+            if !fallback.trim().is_empty() {
+                return Ok(fallback);
+            }
+        }
     }
-    let start = total_rows.saturating_sub(lines) as u32;
-    let end = total_rows.saturating_sub(1) as u32;
-    core.terminal
-        .read_text_screen((0, start), (cols.saturating_sub(1), end), false)
+    Ok(text)
 }
 
 fn ghostty_recent_ansi(
@@ -1744,15 +1756,76 @@ fn ghostty_recent_ansi(
     lines: usize,
     unwrap: bool,
 ) -> Result<String, crate::ghostty::Error> {
-    let total_rows = core.terminal.total_rows()?;
-    let cols = core.terminal.cols()?;
-    if total_rows == 0 || cols == 0 {
-        return Ok(String::new());
+    let ansi = ghostty_recent_ansi_for_terminal(&core.terminal, lines, unwrap)?;
+    #[cfg(windows)]
+    {
+        if ansi.trim().is_empty() {
+            let fallback = windows_recent_fallback::recent_text(core, lines, unwrap);
+            if !fallback.trim().is_empty() {
+                return Ok(fallback);
+            }
+        }
     }
-    let start = total_rows.saturating_sub(lines) as u32;
-    let end = total_rows.saturating_sub(1) as u32;
-    core.terminal
-        .read_ansi_screen((0, start), (cols.saturating_sub(1), end), false, unwrap)
+    Ok(ansi)
+}
+
+fn ghostty_recent_text_for_terminal(
+    terminal: &crate::ghostty::Terminal,
+    lines: usize,
+) -> Result<String, crate::ghostty::Error> {
+    let Some((start, end, cols)) = ghostty_recent_read_range(terminal, lines)? else {
+        return Ok(String::new());
+    };
+    let mut rows = Vec::with_capacity(end.saturating_sub(start).saturating_add(1));
+    for y in start..=end {
+        rows.push(ghostty_screen_row(terminal, cols, y as u32)?);
+    }
+    trim_trailing_blank_rows(&mut rows);
+    Ok(recent_text_from_rows(&rows, lines))
+}
+
+fn ghostty_recent_text_unwrapped_for_terminal(
+    terminal: &crate::ghostty::Terminal,
+    lines: usize,
+) -> Result<String, crate::ghostty::Error> {
+    let Some((start, end, cols)) = ghostty_recent_read_range(terminal, lines)? else {
+        return Ok(String::new());
+    };
+    terminal.read_text_screen(
+        (0, start as u32),
+        (cols.saturating_sub(1), end as u32),
+        false,
+    )
+}
+
+fn ghostty_recent_ansi_for_terminal(
+    terminal: &crate::ghostty::Terminal,
+    lines: usize,
+    unwrap: bool,
+) -> Result<String, crate::ghostty::Error> {
+    let Some((start, end, cols)) = ghostty_recent_read_range(terminal, lines)? else {
+        return Ok(String::new());
+    };
+    terminal.read_ansi_screen(
+        (0, start as u32),
+        (cols.saturating_sub(1), end as u32),
+        false,
+        unwrap,
+    )
+}
+
+fn ghostty_recent_read_range(
+    terminal: &crate::ghostty::Terminal,
+    lines: usize,
+) -> Result<Option<(usize, usize, u16)>, crate::ghostty::Error> {
+    let total_rows = terminal.total_rows()?;
+    let cols = terminal.cols()?;
+    if total_rows == 0 || cols == 0 || lines == 0 {
+        return Ok(None);
+    }
+    let end = total_rows.saturating_sub(1);
+    let start = end.saturating_add(1).saturating_sub(lines);
+    Ok(Some((start, end, cols)))
 }
 
 fn ghostty_restore_scroll_offset_from_bottom(
@@ -1783,13 +1856,13 @@ fn ghostty_extract_selection(
 }
 
 fn ghostty_screen_row(
-    core: &GhosttyPaneCore,
+    terminal: &crate::ghostty::Terminal,
     cols: u16,
     y: u32,
 ) -> Result<String, crate::ghostty::Error> {
     let mut line = String::new();
     for x in 0..cols {
-        let (wide, graphemes) = core.terminal.screen_cell(x, y)?;
+        let (wide, graphemes) = terminal.screen_cell(x, y)?;
         if wide == crate::ghostty::CellWide::SpacerTail {
             continue;
         }

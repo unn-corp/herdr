@@ -2277,6 +2277,41 @@ impl<'a> RowIter<'a> {
         Ok(dirty)
     }
 
+    #[cfg(windows)]
+    pub fn wrap_state(&self) -> Result<(bool, bool), Error> {
+        let mut row = 0;
+        // SAFETY: row output matches requested row data type.
+        unsafe {
+            ffi::ghostty_render_state_row_get(
+                self.iterator.raw,
+                ffi::GhosttyRenderStateRowData_GHOSTTY_RENDER_STATE_ROW_DATA_RAW,
+                (&mut row as *mut ffi::GhosttyRow).cast(),
+            )
+            .into_result()?;
+        }
+        let mut soft_wrapped = false;
+        // SAFETY: wrap output matches requested row data type.
+        unsafe {
+            ffi::ghostty_row_get(
+                row,
+                ffi::GhosttyRowData_GHOSTTY_ROW_DATA_WRAP,
+                (&mut soft_wrapped as *mut bool).cast(),
+            )
+            .into_result()?;
+        }
+        let mut wrap_continuation = false;
+        // SAFETY: wrap continuation output matches requested row data type.
+        unsafe {
+            ffi::ghostty_row_get(
+                row,
+                ffi::GhosttyRowData_GHOSTTY_ROW_DATA_WRAP_CONTINUATION,
+                (&mut wrap_continuation as *mut bool).cast(),
+            )
+            .into_result()?;
+        }
+        Ok((soft_wrapped, wrap_continuation))
+    }
+
     pub fn clear_dirty(&mut self) -> Result<(), Error> {
         self.set_dirty(false)
     }
