@@ -321,6 +321,7 @@ fn api_method_name(method: &Method) -> &'static str {
         Method::WorkspaceFocus(_) => "workspace.focus",
         Method::WorkspaceRename(_) => "workspace.rename",
         Method::WorkspaceMove(_) => "workspace.move",
+        Method::WorkspaceSetCwd(_) => "workspace.set_cwd",
         Method::WorkspaceClose(_) => "workspace.close",
         Method::WorktreeList(_) => "worktree.list",
         Method::WorktreeCreate(_) => "worktree.create",

@@ -75,6 +75,8 @@ pub enum Method {
     WorkspaceRename(WorkspaceRenameParams),
     #[serde(rename = "workspace.move")]
     WorkspaceMove(WorkspaceMoveParams),
+    #[serde(rename = "workspace.set_cwd")]
+    WorkspaceSetCwd(WorkspaceSetCwdParams),
     #[serde(rename = "workspace.close")]
     WorkspaceClose(WorkspaceTarget),
     #[serde(rename = "worktree.list")]

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::api::schema::{WorkspaceCreateParams, WorkspaceRenameParams};
+use crate::api::schema::{WorkspaceCreateParams, WorkspaceRenameParams, WorkspaceSetCwdParams};
 
 pub(super) fn run_workspace_command(args: &[String]) -> std::io::Result<i32> {
     let Some(subcommand) = args.first().map(|arg| arg.as_str()) else {
@@ -14,6 +14,8 @@ pub(super) fn run_workspace_command(args: &[String]) -> std::io::Result<i32> {
         "get" => workspace_get(&args[1..]),
         "focus" => workspace_focus(&args[1..]),
         "rename" => workspace_rename(&args[1..]),
+        "set-cwd" => workspace_set_cwd(&args[1..]),
+        "clear-cwd" => workspace_clear_cwd(&args[1..]),
         "close" => workspace_close(&args[1..]),
         "help" | "--help" | "-h" => {
             print_workspace_help();
@@ -136,6 +138,30 @@ fn workspace_rename(args: &[String]) -> std::io::Result<i32> {
     })
 }
 
+fn workspace_set_cwd(args: &[String]) -> std::io::Result<i32> {
+    if args.len() != 2 {
+        eprintln!("usage: herdr workspace set-cwd <workspace_id> <path>");
+        return Ok(2);
+    }
+
+    super::runtime::workspace_set_cwd(WorkspaceSetCwdParams {
+        workspace_id: super::normalize_workspace_id(&args[0]),
+        cwd: Some(args[1].clone()),
+    })
+}
+
+fn workspace_clear_cwd(args: &[String]) -> std::io::Result<i32> {
+    if args.len() != 1 {
+        eprintln!("usage: herdr workspace clear-cwd <workspace_id>");
+        return Ok(2);
+    }
+
+    super::runtime::workspace_set_cwd(WorkspaceSetCwdParams {
+        workspace_id: super::normalize_workspace_id(&args[0]),
+        cwd: None,
+    })
+}
+
 fn workspace_close(args: &[String]) -> std::io::Result<i32> {
     let Some(raw_workspace_id) = args.first() else {
         eprintln!("usage: herdr workspace close <workspace_id>");
@@ -156,5 +182,7 @@ fn print_workspace_help() {
     eprintln!("  herdr workspace get <workspace_id>");
     eprintln!("  herdr workspace focus <workspace_id>");
     eprintln!("  herdr workspace rename <workspace_id> <label>");
+    eprintln!("  herdr workspace set-cwd <workspace_id> <path>");
+    eprintln!("  herdr workspace clear-cwd <workspace_id>");
     eprintln!("  herdr workspace close <workspace_id>");
 }

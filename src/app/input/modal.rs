@@ -325,6 +325,18 @@ pub(super) fn open_rename_workspace(
     state.mode = Mode::RenameWorkspace;
 }
 
+pub(super) fn open_set_workspace_dir(state: &mut AppState, ws_idx: usize) {
+    state.selected = ws_idx;
+    state.rename_pane_target = None;
+    state.name_input = state
+        .workspaces
+        .get(ws_idx)
+        .and_then(|ws| ws.default_cwd.clone())
+        .unwrap_or_default();
+    state.name_input_replace_on_type = state.name_input.is_empty();
+    state.mode = Mode::SetWorkspaceDir;
+}
+
 pub(super) fn open_rename_active_tab(state: &mut AppState, replace_on_type: bool) {
     state.creating_new_tab = false;
     state.requested_new_tab_name = None;
@@ -497,6 +509,13 @@ pub(super) fn apply_rename_action(state: &mut AppState, action: ModalAction) {
                                 }
                             }
                         }
+                    }
+                }
+                Mode::SetWorkspaceDir => {
+                    if let Some(ws) = state.workspaces.get_mut(state.selected) {
+                        let trimmed = new_name.trim();
+                        ws.set_default_cwd((!trimmed.is_empty()).then(|| trimmed.to_string()));
+                        state.mark_session_dirty();
                     }
                 }
                 _ => {}
@@ -725,6 +744,22 @@ pub(super) fn apply_context_menu_action(
             Some("Rename"),
         ) => {
             open_rename_workspace(state, terminal_runtimes, ws_idx);
+        }
+        (
+            ContextMenuKind::Workspace { ws_idx } | ContextMenuKind::GitWorkspace { ws_idx, .. },
+            Some("Set Default Directory"),
+        ) => {
+            open_set_workspace_dir(state, ws_idx);
+        }
+        (
+            ContextMenuKind::Workspace { ws_idx } | ContextMenuKind::GitWorkspace { ws_idx, .. },
+            Some("Clear Default Directory"),
+        ) => {
+            if let Some(ws) = state.workspaces.get_mut(ws_idx) {
+                ws.set_default_cwd(None);
+                state.mark_session_dirty();
+            }
+            leave_modal(state);
         }
         (
             ContextMenuKind::Workspace { ws_idx } | ContextMenuKind::GitWorkspace { ws_idx, .. },
@@ -999,6 +1034,18 @@ impl App {
                     }
                 }
             }
+            Mode::SetWorkspaceDir => {
+                let workspace_id = self.public_workspace_id(self.state.selected);
+                let cwd = if new_name.trim().is_empty() {
+                    None
+                } else {
+                    Some(new_name.trim().to_string())
+                };
+                self.runtime_workspace_set_cwd(
+                    "tui.workspace.set_cwd",
+                    crate::api::schema::WorkspaceSetCwdParams { workspace_id, cwd },
+                );
+            }
             _ => {}
         }
 
@@ -1141,6 +1188,26 @@ impl App {
                 | ContextMenuKind::GitWorkspace { ws_idx, .. },
                 Some("Rename"),
             ) => open_rename_workspace(&mut self.state, &self.terminal_runtimes, ws_idx),
+            (
+                ContextMenuKind::Workspace { ws_idx }
+                | ContextMenuKind::GitWorkspace { ws_idx, .. },
+                Some("Set Default Directory"),
+            ) => open_set_workspace_dir(&mut self.state, ws_idx),
+            (
+                ContextMenuKind::Workspace { ws_idx }
+                | ContextMenuKind::GitWorkspace { ws_idx, .. },
+                Some("Clear Default Directory"),
+            ) => {
+                let workspace_id = self.public_workspace_id(ws_idx);
+                self.runtime_workspace_set_cwd(
+                    "tui.workspace.clear_cwd",
+                    crate::api::schema::WorkspaceSetCwdParams {
+                        workspace_id,
+                        cwd: None,
+                    },
+                );
+                leave_modal(&mut self.state);
+            }
             (
                 ContextMenuKind::Workspace { ws_idx }
                 | ContextMenuKind::GitWorkspace { ws_idx, .. },
@@ -1300,6 +1367,43 @@ mod tests {
     use super::super::{capture_snapshot, state_with_workspaces};
     use super::*;
     use crate::workspace::Workspace;
+
+    #[test]
+    fn workspace_context_menu_offers_set_and_clear_default_directory() {
+        let menu = ContextMenuState {
+            kind: ContextMenuKind::Workspace { ws_idx: 0 },
+            x: 0,
+            y: 0,
+            list: MenuListState::new(0),
+        };
+        let items = menu.items();
+        assert!(items.contains(&"Set Default Directory"), "items: {items:?}");
+        assert!(
+            items.contains(&"Clear Default Directory"),
+            "items: {items:?}"
+        );
+    }
+
+    #[test]
+    fn set_workspace_dir_save_sets_then_clears_default_cwd() {
+        let mut state = AppState::test_new();
+        state.workspaces.push(Workspace::test_new("ws"));
+        let idx = state.workspaces.len() - 1;
+        state.selected = idx;
+
+        state.mode = Mode::SetWorkspaceDir;
+        state.name_input = "/tmp/proj".to_string();
+        apply_rename_action(&mut state, ModalAction::Save);
+        assert_eq!(
+            state.workspaces[idx].default_cwd.as_deref(),
+            Some("/tmp/proj")
+        );
+
+        state.mode = Mode::SetWorkspaceDir;
+        state.name_input = "   ".to_string();
+        apply_rename_action(&mut state, ModalAction::Save);
+        assert_eq!(state.workspaces[idx].default_cwd, None);
+    }
 
     fn config_env_lock() -> &'static std::sync::Mutex<()> {
         crate::config::test_config_env_lock()

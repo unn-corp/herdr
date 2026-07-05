@@ -908,6 +908,9 @@ impl App {
             Method::WorkspaceMove(params) => {
                 return self.handle_workspace_move(request.id, params);
             }
+            Method::WorkspaceSetCwd(params) => {
+                return self.handle_workspace_set_cwd(request.id, params);
+            }
             Method::WorkspaceClose(target) => {
                 return self.handle_workspace_close(request.id, target)
             }

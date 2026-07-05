@@ -23,6 +23,14 @@ pub struct WorkspaceRenameParams {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct WorkspaceSetCwdParams {
+    pub workspace_id: String,
+    /// Raw path expression (may contain `~`); `null`/absent clears the default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct WorkspaceMoveParams {
     pub workspace_id: String,
     pub insert_index: usize,

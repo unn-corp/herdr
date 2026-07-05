@@ -62,6 +62,24 @@ fn request_uses_dot_method_names() {
 }
 
 #[test]
+fn workspace_set_cwd_uses_dot_method_name_and_round_trips() {
+    let request = Request {
+        id: "req_set_cwd".into(),
+        method: Method::WorkspaceSetCwd(WorkspaceSetCwdParams {
+            workspace_id: "w1".into(),
+            cwd: Some("~/proj".into()),
+        }),
+    };
+
+    let json = serde_json::to_value(&request).unwrap();
+    assert_eq!(json["method"], "workspace.set_cwd");
+    assert_eq!(json["params"]["cwd"], "~/proj");
+
+    let parsed: Request = serde_json::from_value(json).unwrap();
+    assert!(matches!(parsed.method, Method::WorkspaceSetCwd(_)));
+}
+
+#[test]
 fn bundled_protocol_schema_refs_resolve_inside_bundle() {
     fn assert_no_standalone_refs(value: &serde_json::Value) {
         match value {

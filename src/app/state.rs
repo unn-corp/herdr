@@ -756,6 +756,7 @@ pub enum Mode {
     RenameWorkspace,
     RenameTab,
     RenamePane,
+    SetWorkspaceDir,
     NewLinkedWorktree,
     OpenExistingWorktree,
     ConfirmRemoveWorktree,
@@ -1118,7 +1119,12 @@ pub struct ContextMenuState {
 impl ContextMenuState {
     pub fn items(&self) -> &'static [&'static str] {
         match self.kind {
-            ContextMenuKind::Workspace { .. } => &["Rename", "Close"],
+            ContextMenuKind::Workspace { .. } => &[
+                "Rename",
+                "Set Default Directory",
+                "Clear Default Directory",
+                "Close",
+            ],
             ContextMenuKind::GitWorkspace {
                 is_linked_worktree: false,
                 has_worktree_children: false,

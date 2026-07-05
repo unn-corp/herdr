@@ -157,6 +157,9 @@ pub struct Workspace {
     pub(crate) cached_git_space: Option<GitSpaceMetadata>,
     /// Explicit Herdr-managed worktree grouping provenance.
     pub worktree_space: Option<WorktreeSpaceMembership>,
+    /// User-set default cwd for new tabs/panes in this workspace. Raw path
+    /// expression (may contain `~`); `None` inherits the global cwd policy.
+    pub default_cwd: Option<String>,
     /// Public pane numbers within this workspace. Closed pane numbers are not reused.
     pub public_pane_numbers: HashMap<PaneId, usize>,
     pub(crate) next_public_pane_number: usize,
@@ -184,6 +187,11 @@ impl DerefMut for Workspace {
 }
 
 impl Workspace {
+    /// Set (or clear with `None`) the workspace's default cwd for new tabs/panes.
+    pub(crate) fn set_default_cwd(&mut self, cwd: Option<String>) {
+        self.default_cwd = cwd;
+    }
+
     fn adjust_active_tab_after_removal(&mut self, removed_idx: usize) {
         if self.tabs.is_empty() {
             self.active_tab = 0;
@@ -216,6 +224,7 @@ impl Workspace {
             cached_git_ahead_behind: None,
             cached_git_space: git_space_metadata(&identity_cwd),
             worktree_space: None,
+            default_cwd: None,
             public_pane_numbers,
             next_public_pane_number: 2,
             next_public_tab_number: 2,
@@ -397,6 +406,7 @@ impl Workspace {
                 cached_git_ahead_behind: None,
                 cached_git_space: None,
                 worktree_space: None,
+                default_cwd: None,
                 public_pane_numbers,
                 next_public_pane_number: 2,
                 next_public_tab_number: 2,
@@ -1208,6 +1218,7 @@ impl Workspace {
             cached_git_ahead_behind: None,
             cached_git_space: None,
             worktree_space: None,
+            default_cwd: None,
             public_pane_numbers,
             next_public_pane_number: 2,
             next_public_tab_number: 2,
@@ -1432,6 +1443,16 @@ impl Workspace {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_cwd_defaults_none_and_is_settable() {
+        let mut ws = Workspace::test_new("ws");
+        assert_eq!(ws.default_cwd, None);
+        ws.set_default_cwd(Some("~/proj".to_string()));
+        assert_eq!(ws.default_cwd.as_deref(), Some("~/proj"));
+        ws.set_default_cwd(None);
+        assert_eq!(ws.default_cwd, None);
+    }
 
     #[test]
     fn generated_workspace_ids_are_short_base32_handles() {

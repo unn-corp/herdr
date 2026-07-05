@@ -1639,7 +1639,7 @@ impl App {
             Mode::Copy => {
                 self.handle_copy_mode_key(key);
             }
-            Mode::RenameWorkspace | Mode::RenameTab | Mode::RenamePane => {
+            Mode::RenameWorkspace | Mode::RenameTab | Mode::RenamePane | Mode::SetWorkspaceDir => {
                 self.handle_rename_key_via_api(key_event);
             }
             Mode::NewLinkedWorktree => {
@@ -3437,6 +3437,42 @@ mod tests {
     }
 
     #[test]
+    fn new_terminal_cwd_for_ws_prefers_workspace_default() {
+        let mut app = test_app();
+        app.state
+            .workspaces
+            .push(crate::workspace::Workspace::test_new("ws"));
+        let idx = app.state.workspaces.len() - 1;
+        app.state.workspaces[idx].set_default_cwd(Some("/tmp/ws-default".to_string()));
+
+        let cwd = app.resolve_new_terminal_cwd_for_ws(
+            idx,
+            None,
+            Some(std::path::PathBuf::from("/tmp/follow")),
+        );
+
+        assert_eq!(cwd, std::path::PathBuf::from("/tmp/ws-default"));
+    }
+
+    #[test]
+    fn new_terminal_cwd_for_ws_explicit_beats_workspace_default() {
+        let mut app = test_app();
+        app.state
+            .workspaces
+            .push(crate::workspace::Workspace::test_new("ws"));
+        let idx = app.state.workspaces.len() - 1;
+        app.state.workspaces[idx].set_default_cwd(Some("/tmp/ws-default".to_string()));
+
+        let cwd = app.resolve_new_terminal_cwd_for_ws(
+            idx,
+            Some(std::path::PathBuf::from("/tmp/explicit")),
+            None,
+        );
+
+        assert_eq!(cwd, std::path::PathBuf::from("/tmp/explicit"));
+    }
+
+    #[test]
     fn server_stop_request_sets_should_quit_flag() {
         let mut app = test_app();
 
@@ -4543,7 +4579,7 @@ last_pane = "prefix+tab"
             kind: state::ContextMenuKind::Workspace { ws_idx: 1 },
             x: 2,
             y: 2,
-            list: state::MenuListState::new(1),
+            list: state::MenuListState::new(3),
         });
         app.state.mode = Mode::ContextMenu;
 
