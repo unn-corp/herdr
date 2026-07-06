@@ -316,6 +316,8 @@ pane_gaps = true
 show_agent_labels_on_pane_borders = false
 hide_tab_bar_when_single_tab = false
 agent_panel_sort = "spaces"
+system_monitor = false
+system_monitor_interval_ms = 2000
 accent = "cyan"
 ```
 
@@ -344,6 +346,8 @@ Set `pane_borders = false` to remove split pane borders. Set `pane_gaps = false`
 Set `show_agent_labels_on_pane_borders = true` if you want detected agent labels in split pane borders when no manual pane label is set.
 
 Set `hide_tab_bar_when_single_tab = true` to hide the tab row when the active workspace has exactly one tab. New tabs can still be created with the configured keybinding. When a second tab appears, Herdr restores the tab row and resizes panes to make room for it.
+
+Set `system_monitor = true` to show a one-row CPU / RAM / GPU usage strip at the top of each space. CPU comes from `/proc/stat` and memory from `/proc/meminfo`; GPU utilization is read from `nvidia-smi` first, then an AMD `gpu_busy_percent` sysfs node, and the GPU segment is hidden when neither is available. `system_monitor_interval_ms` sets the refresh cadence (default 2000). The GPU read runs off the render loop so it never stalls the UI. System metrics are read on Linux; other platforms show CPU and RAM as unavailable.
 
 ## Notifications
 

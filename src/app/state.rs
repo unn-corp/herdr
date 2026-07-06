@@ -737,6 +737,8 @@ pub struct ViewState {
     pub tab_scroll_right_hit_area: Rect,
     pub new_tab_hit_area: Rect,
     pub terminal_area: Rect,
+    /// One-row strip above the tab bar for the system monitor, or empty when off.
+    pub monitor_rect: Rect,
     pub mobile_header_rect: Rect,
     pub mobile_menu_hit_area: Rect,
     pub toast_hit_area: Rect,
@@ -1400,6 +1402,10 @@ pub struct AppState {
     pub pane_gaps: bool,
     pub show_agent_labels_on_pane_borders: bool,
     pub hide_tab_bar_when_single_tab: bool,
+    /// Whether to reserve and draw the top-of-space system monitor strip.
+    pub system_monitor_enabled: bool,
+    /// Latest CPU/RAM/GPU sample for the monitor strip, or `None` until first sampled.
+    pub system_monitor: Option<crate::platform::SystemSample>,
     pub pane_history_persistence: bool,
     /// Expose the focused pane's cursor anchor to the outer terminal even when
     /// the pane requested `?25l`. See `[experimental] reveal_hidden_cursor_for_cjk_ime`.
@@ -1712,6 +1718,7 @@ impl AppState {
                 tab_scroll_right_hit_area: Rect::default(),
                 new_tab_hit_area: Rect::default(),
                 terminal_area: Rect::default(),
+                monitor_rect: Rect::default(),
                 mobile_header_rect: Rect::default(),
                 mobile_menu_hit_area: Rect::default(),
                 toast_hit_area: Rect::default(),
@@ -1758,6 +1765,8 @@ impl AppState {
             pane_gaps: false,
             show_agent_labels_on_pane_borders: false,
             hide_tab_bar_when_single_tab: false,
+            system_monitor_enabled: false,
+            system_monitor: None,
             pane_history_persistence: false,
             reveal_hidden_cursor_for_cjk_ime: false,
             cjk_ime_agent_filter_configured: false,

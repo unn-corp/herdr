@@ -142,7 +142,36 @@ pub struct App {
     /// even when an App-internal drain consumes the event before the forwarding drain.
     pub(crate) local_input_source_switch: bool,
     pub(crate) config_reloaded_from_disk: bool,
+    pub(crate) system_monitor: SystemMonitor,
     prefix_input_source: Box<dyn crate::platform::PrefixInputSource>,
+}
+
+/// Sampler machinery for the top-of-space system monitor strip.
+///
+/// The rendered sample lives on [`AppState::system_monitor`] (pure view data);
+/// this holds only the timing and the shared cell the async GPU read writes
+/// into. CPU/RAM are read inline (cheap `/proc` reads); the GPU read spawns
+/// `nvidia-smi`, so it runs off the loop and notifies via `render_notify`.
+pub(crate) struct SystemMonitor {
+    pub(crate) interval: Duration,
+    pub(crate) next_tick: Option<Instant>,
+    pub(crate) cpu_prev: Option<crate::platform::CpuSnapshot>,
+    pub(crate) gpu_latest: Arc<std::sync::Mutex<Option<crate::platform::GpuSample>>>,
+    pub(crate) gpu_inflight: Arc<AtomicBool>,
+    pub(crate) gpu_supported: bool,
+}
+
+impl SystemMonitor {
+    fn from_config(config: &Config) -> Self {
+        Self {
+            interval: Duration::from_millis(config.ui.system_monitor_interval_ms.max(200)),
+            next_tick: config.ui.system_monitor.then(Instant::now),
+            cpu_prev: None,
+            gpu_latest: Arc::new(std::sync::Mutex::new(None)),
+            gpu_inflight: Arc::new(AtomicBool::new(false)),
+            gpu_supported: crate::platform::gpu_monitor_supported(),
+        }
+    }
 }
 
 pub(crate) const APP_EVENT_CHANNEL_CAPACITY: usize = 256;
@@ -563,6 +592,7 @@ impl App {
                 tab_scroll_right_hit_area: Rect::default(),
                 new_tab_hit_area: Rect::default(),
                 terminal_area: Rect::default(),
+                monitor_rect: Rect::default(),
                 mobile_header_rect: Rect::default(),
                 mobile_menu_hit_area: Rect::default(),
                 toast_hit_area: Rect::default(),
@@ -609,6 +639,8 @@ impl App {
             pane_gaps: config.ui.pane_gaps,
             show_agent_labels_on_pane_borders: config.ui.show_agent_labels_on_pane_borders,
             hide_tab_bar_when_single_tab: config.ui.hide_tab_bar_when_single_tab,
+            system_monitor_enabled: config.ui.system_monitor,
+            system_monitor: None,
             pane_history_persistence: config.experimental.pane_history,
             reveal_hidden_cursor_for_cjk_ime: config.experimental.reveal_hidden_cursor_for_cjk_ime,
             cjk_ime_agent_filter_configured: !config.experimental.cjk_ime_agents.is_empty(),
@@ -722,6 +754,7 @@ impl App {
             selection_autoscroll_deadline: None,
             selection_highlight_clear_deadline: None,
             persist_pane_history: config.experimental.pane_history,
+            system_monitor: SystemMonitor::from_config(config),
             last_render_at: None,
             suppressed_repeat_keys: HashSet::new(),
             api_rx,
@@ -988,6 +1021,9 @@ impl App {
 
             let now = Instant::now();
             self.sync_animation_timer(now);
+            if self.sync_system_monitor(now) {
+                needs_render = true;
+            }
             self.sync_host_mouse_capture(&mut host_mouse_capture_active)?;
 
             if needs_render && self.can_render_now(now) {
@@ -1382,6 +1418,13 @@ impl App {
                 self.state.show_agent_labels_on_pane_borders =
                     config.ui.show_agent_labels_on_pane_borders;
                 self.state.hide_tab_bar_when_single_tab = config.ui.hide_tab_bar_when_single_tab;
+                self.state.system_monitor_enabled = config.ui.system_monitor;
+                self.system_monitor.interval =
+                    Duration::from_millis(config.ui.system_monitor_interval_ms.max(200));
+                self.system_monitor.next_tick = config.ui.system_monitor.then(Instant::now);
+                if !config.ui.system_monitor {
+                    self.state.system_monitor = None;
+                }
                 self.state.agent_panel_sort =
                     agent_panel_sort_from_config(config.ui.agent_panel_sort);
                 self.state.agent_panel_scroll = 0;

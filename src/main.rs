@@ -299,6 +299,11 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # "workspaces" is accepted as an alias for "spaces".
 # agent_panel_sort = "spaces"
 
+# Show a one-row CPU / RAM / GPU usage strip at the top of each space.
+# GPU is read from nvidia-smi, then AMD sysfs; it is hidden when neither is present.
+# system_monitor = false
+# system_monitor_interval_ms = 2000
+
 # Accent color for highlights, borders, and navigation UI.
 # Accepts: hex (#89b4fa), named colors (cyan, blue, magenta), or rgb(r,g,b)
 # accent = "cyan"

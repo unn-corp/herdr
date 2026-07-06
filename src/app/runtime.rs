@@ -353,6 +353,86 @@ impl App {
         }
     }
 
+    /// Refresh the system monitor strip if due, and fold in any completed async
+    /// GPU read. Returns whether the displayed sample changed (render needed).
+    pub(crate) fn sync_system_monitor(&mut self, now: Instant) -> bool {
+        if !self.state.system_monitor_enabled {
+            self.system_monitor.next_tick = None;
+            return false;
+        }
+
+        // Fold the latest async GPU result into the current sample even between
+        // full samples, so the GPU segment appears as soon as the read finishes.
+        let mut changed = false;
+        if let Some(sample) = self.state.system_monitor.as_mut() {
+            if let Ok(gpu) = self.system_monitor.gpu_latest.lock() {
+                if sample.gpu != *gpu {
+                    sample.gpu = *gpu;
+                    changed = true;
+                }
+            }
+        }
+
+        let due = self.system_monitor.next_tick.is_none_or(|tick| now >= tick);
+        if !due {
+            return changed;
+        }
+        self.system_monitor.next_tick = Some(now + self.system_monitor.interval);
+
+        let cpu_now = crate::platform::read_cpu_snapshot();
+        let cpu_pct = match (self.system_monitor.cpu_prev, cpu_now) {
+            (Some(prev), Some(cur)) => crate::platform::cpu_pct_from_delta(prev, cur),
+            _ => None,
+        };
+        self.system_monitor.cpu_prev = cpu_now;
+        let ram_pct = crate::platform::read_ram_pct();
+        let gpu = self
+            .system_monitor
+            .gpu_latest
+            .lock()
+            .ok()
+            .and_then(|guard| *guard);
+
+        self.state.system_monitor = Some(crate::platform::SystemSample {
+            cpu_pct,
+            ram_pct,
+            gpu,
+        });
+        self.spawn_gpu_read();
+        true
+    }
+
+    /// Spawn an off-loop GPU read (`nvidia-smi` / AMD sysfs) that stores its
+    /// result and wakes the loop. No-op when GPU metrics are unsupported or a
+    /// read is already in flight, so per-tick spawns never stack up.
+    fn spawn_gpu_read(&self) {
+        use std::sync::atomic::Ordering;
+
+        if !self.system_monitor.gpu_supported {
+            return;
+        }
+        if self
+            .system_monitor
+            .gpu_inflight
+            .swap(true, Ordering::AcqRel)
+        {
+            return;
+        }
+        let latest = self.system_monitor.gpu_latest.clone();
+        let inflight = self.system_monitor.gpu_inflight.clone();
+        let render_notify = self.render_notify.clone();
+        let render_dirty = self.render_dirty.clone();
+        tokio::task::spawn_blocking(move || {
+            let sample = crate::platform::read_gpu_sample();
+            if let Ok(mut guard) = latest.lock() {
+                *guard = sample;
+            }
+            inflight.store(false, Ordering::Release);
+            render_dirty.store(true, Ordering::Release);
+            render_notify.notify_one();
+        });
+    }
+
     fn agent_panel_has_animation(&self) -> bool {
         self.state
             .workspaces
@@ -556,6 +636,7 @@ impl App {
             self.state.next_pending_agent_notification_deadline(),
             self.copy_feedback_deadline,
             self.next_animation_tick,
+            self.system_monitor.next_tick,
             include_git_refresh
                 .then(|| self.git_refresh_deadline())
                 .flatten(),

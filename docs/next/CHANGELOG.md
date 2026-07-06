@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- Added `ui.system_monitor` to show a one-row CPU / RAM / GPU usage strip at the top of each space, with `ui.system_monitor_interval_ms` controlling the refresh cadence. GPU utilization comes from `nvidia-smi` or an AMD `gpu_busy_percent` sysfs node and is hidden when neither is present; the GPU read runs off the render loop.
 - Added `ui.sidebar_collapsed_mode = "hidden"` to make a collapsed sidebar use zero width while keeping the existing compact rail as the default. (#842)
 - Added `herdr completion <shell>` / `herdr completions <shell>` to generate shell completion scripts for bash, elvish, fish, PowerShell, and zsh. (#435)
 - Added `session.snapshot` to bootstrap client runtime state in one socket API response before subscribing to events.

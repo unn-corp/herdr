@@ -9,6 +9,7 @@ mod dialogs;
 mod keybind_help;
 mod menus;
 mod mobile;
+mod monitor;
 mod navigator;
 mod onboarding;
 mod panes;
@@ -186,11 +187,25 @@ fn resize_background_tab_panes_for_desktop(
     }
 }
 
+/// If the system monitor is enabled and there is vertical room, carve a one-row
+/// strip off the top of `main_area` for it. Returns `(monitor_rect, remaining)`.
+/// Applied before the tab-bar/terminal split so both callers stay consistent.
+fn split_monitor_strip(app: &AppState, main_area: Rect) -> (Option<Rect>, Rect) {
+    if app.system_monitor_enabled && main_area.height > 2 {
+        let [monitor_rect, rest] =
+            Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).areas(main_area);
+        (Some(monitor_rect), rest)
+    } else {
+        (None, main_area)
+    }
+}
+
 fn desktop_tab_bar_and_terminal_area(
     app: &AppState,
     ws: &crate::workspace::Workspace,
     main_area: Rect,
 ) -> (Rect, Rect) {
+    let (_, main_area) = split_monitor_strip(app, main_area);
     let hide_single_tab_bar = app.hide_tab_bar_when_single_tab && ws.tabs.len() == 1;
     if !hide_single_tab_bar && main_area.height > 1 {
         let [tab_bar_rect, terminal_area] =
@@ -226,11 +241,15 @@ fn compute_view_internal(
     let [sidebar_area, main_area] =
         Layout::horizontal([Constraint::Length(sidebar_w), Constraint::Min(1)]).areas(area);
 
+    let monitor_rect = split_monitor_strip(app, main_area).0.unwrap_or_default();
     let (tab_bar_rect, terminal_area) = app
         .active
         .and_then(|i| app.workspaces.get(i))
         .map(|ws| desktop_tab_bar_and_terminal_area(app, ws, main_area))
-        .unwrap_or((Rect::default(), main_area));
+        .unwrap_or_else(|| {
+            let (_, rest) = split_monitor_strip(app, main_area);
+            (Rect::default(), rest)
+        });
 
     if !app.sidebar_collapsed {
         app.workspace_scroll = normalized_workspace_scroll(app, sidebar_area, app.workspace_scroll);
@@ -311,6 +330,7 @@ fn compute_view_internal(
         tab_scroll_right_hit_area: tab_bar_view.scroll_right_hit_area,
         new_tab_hit_area: tab_bar_view.new_tab_hit_area,
         terminal_area,
+        monitor_rect,
         mobile_header_rect: Rect::default(),
         mobile_menu_hit_area: Rect::default(),
         toast_hit_area,
@@ -381,6 +401,7 @@ fn compute_mobile_view(
         tab_scroll_right_hit_area: Rect::default(),
         new_tab_hit_area: Rect::default(),
         terminal_area,
+        monitor_rect: Rect::default(),
         mobile_header_rect: header_rect,
         mobile_menu_hit_area: header_hits.menu,
         toast_hit_area,
@@ -416,6 +437,10 @@ pub fn render_with_runtime_registry(
     }
     if app.view.layout != ViewLayout::Mobile {
         render_tab_bar(app, frame, tab_bar_area);
+        let monitor_area = app.view.monitor_rect;
+        if monitor_area.width > 0 && monitor_area.height > 0 {
+            self::monitor::render_system_monitor(app, frame, monitor_area);
+        }
     }
     render_panes(app, terminal_runtimes, frame, terminal_area);
 
@@ -775,6 +800,45 @@ mod tests {
         assert_eq!(app.view.tab_bar_rect, Rect::default());
         assert!(app.view.tab_hit_areas.is_empty());
         assert_eq!(app.view.new_tab_hit_area, Rect::default());
+    }
+
+    #[test]
+    fn system_monitor_reserves_top_row_and_reflows_terminal() {
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![Workspace::test_new("one")];
+        app.active = Some(0);
+        app.selected = 0;
+        app.mode = Mode::Terminal;
+
+        // Baseline: monitor off, no strip reserved.
+        compute_view(&mut app, Rect::new(0, 0, 80, 20));
+        assert_eq!(app.view.monitor_rect, Rect::default());
+        let tab_bar_off = app.view.tab_bar_rect;
+        let terminal_off = app.view.terminal_area;
+
+        // Enabled: a one-row strip is carved off the top of the main area, and
+        // the tab bar and terminal both shift down by one row.
+        app.system_monitor_enabled = true;
+        compute_view(&mut app, Rect::new(0, 0, 80, 20));
+        assert_eq!(app.view.monitor_rect, Rect::new(26, 0, 54, 1));
+        assert_eq!(
+            app.view.tab_bar_rect,
+            Rect::new(
+                tab_bar_off.x,
+                tab_bar_off.y + 1,
+                tab_bar_off.width,
+                tab_bar_off.height
+            )
+        );
+        assert_eq!(
+            app.view.terminal_area,
+            Rect::new(
+                terminal_off.x,
+                terminal_off.y + 1,
+                terminal_off.width,
+                terminal_off.height - 1
+            )
+        );
     }
 
     #[tokio::test]
