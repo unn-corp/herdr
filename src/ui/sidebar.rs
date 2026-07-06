@@ -966,6 +966,12 @@ fn render_workspace_list(
                         spans.push(Span::styled(label, Style::default().fg(color)));
                     }
                 }
+                if let Some(dirty) = ws.git_dirty().filter(|count| *count > 0) {
+                    spans.push(Span::styled(
+                        format!("  +{dirty}"),
+                        Style::default().fg(p.yellow),
+                    ));
+                }
                 frame.render_widget(
                     Paragraph::new(Line::from(spans)),
                     Rect::new(card.rect.x, row_y + 1, card.rect.width, 1),
@@ -1121,6 +1127,18 @@ fn render_agent_detail(
         if let Some(custom_status) = &detail.custom_status {
             status_spans.push(Span::styled(" · ", agent_style));
             status_spans.push(Span::styled(custom_status.clone(), agent_style));
+        }
+        if let Some(dirty) = app
+            .workspaces
+            .get(detail.ws_idx)
+            .and_then(|ws| ws.git_dirty())
+            .filter(|count| *count > 0)
+        {
+            status_spans.push(Span::styled(" · ", agent_style));
+            status_spans.push(Span::styled(
+                format!("+{dirty}"),
+                Style::default().fg(p.yellow).add_modifier(Modifier::DIM),
+            ));
         }
         frame.render_widget(
             Paragraph::new(Line::from(status_spans)).style(row_style),

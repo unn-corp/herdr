@@ -329,6 +329,7 @@ fn theme_runtime_config(
                 .and_then(|c| c.accent.as_ref())
                 .is_none())
         .then(|| config.ui.accent.clone()),
+        transparent_background: config.ui.transparent_background,
     }
 }
 
@@ -351,6 +352,9 @@ fn resolve_palette_for_theme_name(
     }
     if let Some(accent) = &runtime.legacy_accent {
         palette.accent = crate::config::parse_color(accent);
+    }
+    if runtime.transparent_background {
+        palette = palette.with_transparent_backgrounds();
     }
 
     palette
@@ -2079,6 +2083,7 @@ mod tests {
                 resolved_identity_cwd,
                 branch: Some("render-dirty-test".into()),
                 ahead_behind: Some((1, 0)),
+                dirty: None,
                 space: None,
             }],
             cache_updates: Vec::new(),

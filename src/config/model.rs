@@ -812,6 +812,9 @@ pub struct UiConfig {
     pub system_monitor: bool,
     /// How often the system monitor strip re-samples, in milliseconds. Default: 2000.
     pub system_monitor_interval_ms: u64,
+    /// Use the terminal's default background for all Herdr chrome instead of the
+    /// theme's solid fills, so a transparent terminal shows through. Default: false.
+    pub transparent_background: bool,
     /// Accent color for highlights, borders, and navigation UI.
     /// Accepts hex (#89b4fa), named colors (cyan, blue), or RGB (rgb(137,180,250)).
     pub accent: String,
@@ -1006,6 +1009,7 @@ impl Default for UiConfig {
             agent_panel_sort: AgentPanelSortConfig::Spaces,
             system_monitor: false,
             system_monitor_interval_ms: 2000,
+            transparent_background: false,
             accent: "cyan".into(),
             toast: ToastConfig::default(),
             sound: SoundConfig::default(),
@@ -1186,15 +1190,18 @@ resume_agents_on_restore = false
         let defaults = Config::default();
         assert!(!defaults.ui.system_monitor);
         assert_eq!(defaults.ui.system_monitor_interval_ms, 2000);
+        assert!(!defaults.ui.transparent_background);
 
         let toml = r#"
 [ui]
 system_monitor = true
 system_monitor_interval_ms = 500
+transparent_background = true
 "#;
         let config: Config = toml::from_str(toml).unwrap();
         assert!(config.ui.system_monitor);
         assert_eq!(config.ui.system_monitor_interval_ms, 500);
+        assert!(config.ui.transparent_background);
     }
 
     #[test]

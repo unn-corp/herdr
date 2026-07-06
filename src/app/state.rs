@@ -515,6 +515,17 @@ impl Palette {
     }
 
     /// Apply custom color overrides on top of this palette.
+    /// Replace every background-fill role with the terminal's default color, so
+    /// Herdr's chrome renders transparent and a translucent terminal shows
+    /// through. Foreground and accent colors are left untouched.
+    pub fn with_transparent_backgrounds(mut self) -> Self {
+        self.panel_bg = Color::Reset;
+        self.surface0 = Color::Reset;
+        self.surface1 = Color::Reset;
+        self.surface_dim = Color::Reset;
+        self
+    }
+
     pub fn with_overrides(mut self, custom: &crate::config::CustomThemeColors) -> Self {
         use crate::config::parse_color;
         if let Some(c) = &custom.accent {
@@ -1016,6 +1027,8 @@ pub struct ThemeRuntimeConfig {
     pub auto_switch: bool,
     pub custom: Option<crate::config::CustomThemeColors>,
     pub legacy_accent: Option<String>,
+    /// Replace the theme's background fills with the terminal default (transparent).
+    pub transparent_background: bool,
 }
 
 pub struct SettingsState {
@@ -1796,6 +1809,7 @@ impl AppState {
                 auto_switch: false,
                 custom: None,
                 legacy_accent: None,
+                transparent_background: false,
             },
             host_terminal_appearance: None,
             host_terminal_appearance_explicit: false,

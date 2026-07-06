@@ -197,8 +197,8 @@ pub(super) fn state_dot(state: AgentState, seen: bool, p: &Palette) -> (&'static
     match (state, seen) {
         (AgentState::Blocked, _) => ("●", Style::default().fg(p.red)),
         (AgentState::Working, _) => ("●", Style::default().fg(p.yellow)),
-        (AgentState::Idle, false) => ("●", Style::default().fg(p.teal)),
-        (AgentState::Idle, true) => ("○", Style::default().fg(p.green)),
+        (AgentState::Idle, false) => ("●", Style::default().fg(p.mauve)),
+        (AgentState::Idle, true) => ("○", Style::default().fg(p.peach)),
         (AgentState::Unknown, _) => ("·", Style::default().fg(p.overlay0)),
     }
 }
@@ -212,8 +212,8 @@ pub(super) fn agent_icon(
     match (state, seen) {
         (AgentState::Blocked, _) => ("◉", Style::default().fg(p.red)),
         (AgentState::Working, _) => (super::spinner_frame(tick), Style::default().fg(p.yellow)),
-        (AgentState::Idle, false) => ("●", Style::default().fg(p.teal)),
-        (AgentState::Idle, true) => ("✓", Style::default().fg(p.green)),
+        (AgentState::Idle, false) => ("●", Style::default().fg(p.mauve)),
+        (AgentState::Idle, true) => ("✓", Style::default().fg(p.peach)),
         (AgentState::Unknown, _) => ("○", Style::default().fg(p.overlay0)),
     }
 }
@@ -232,8 +232,8 @@ pub(super) fn state_label_color(state: AgentState, seen: bool, p: &Palette) -> C
     match (state, seen) {
         (AgentState::Blocked, _) => p.red,
         (AgentState::Working, _) => p.yellow,
-        (AgentState::Idle, false) => p.teal,
-        (AgentState::Idle, true) => p.green,
+        (AgentState::Idle, false) => p.mauve,
+        (AgentState::Idle, true) => p.peach,
         (AgentState::Unknown, _) => p.overlay0,
     }
 }

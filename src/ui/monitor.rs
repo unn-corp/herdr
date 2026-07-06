@@ -24,15 +24,39 @@ pub(super) fn render_system_monitor(app: &AppState, frame: &mut Frame, area: Rec
     let p = &app.palette;
     let background = Style::default().bg(p.surface0);
 
-    let line = match &app.system_monitor {
-        Some(sample) => Line::from(metric_spans(sample, p)),
-        None => Line::from(Span::styled(
-            " sampling…",
-            Style::default().fg(p.overlay0).bg(p.surface0),
-        )),
+    let mut spans = match &app.system_monitor {
+        Some(sample) => metric_spans(sample, p),
+        None => vec![Span::styled(" sampling…", Style::default().fg(p.overlay0))],
     };
+    // Git status for the active space's repo, updating as you move between spaces.
+    if let Some(ws) = app.active.and_then(|idx| app.workspaces.get(idx)) {
+        push_git_spans(&mut spans, ws, p);
+    }
 
-    frame.render_widget(Paragraph::new(line).style(background), area);
+    frame.render_widget(Paragraph::new(Line::from(spans)).style(background), area);
+}
+
+fn push_git_spans(spans: &mut Vec<Span<'static>>, ws: &crate::workspace::Workspace, p: &Palette) {
+    let branch = ws.branch();
+    let dirty = ws.git_dirty();
+    if branch.is_none() && dirty.is_none() {
+        return;
+    }
+    push_separator(spans, p);
+    if let Some(branch) = branch {
+        spans.push(Span::styled(
+            branch,
+            Style::default().fg(p.mauve).add_modifier(Modifier::BOLD),
+        ));
+    }
+    match dirty {
+        Some(count) if count > 0 => spans.push(Span::styled(
+            format!("  +{count}"),
+            Style::default().fg(p.yellow).add_modifier(Modifier::BOLD),
+        )),
+        Some(_) => spans.push(Span::styled("  ✓", Style::default().fg(p.green))),
+        None => {}
+    }
 }
 
 fn metric_spans(sample: &SystemSample, p: &Palette) -> Vec<Span<'static>> {
@@ -44,8 +68,10 @@ fn metric_spans(sample: &SystemSample, p: &Palette) -> Vec<Span<'static>> {
         push_separator(&mut spans, p);
         push_metric(&mut spans, "GPU", Some(gpu.util_pct), p);
         if let Some(vram) = gpu.vram_pct {
-            push_separator(&mut spans, p);
-            push_metric(&mut spans, "VRAM", Some(vram), p);
+            spans.push(Span::styled(
+                format!(" ({vram}%)"),
+                Style::default().fg(p.subtext0),
+            ));
         }
     }
     spans
@@ -120,7 +146,8 @@ mod tests {
         assert!(text.contains("12%"), "missing cpu value: {text:?}");
         assert!(text.contains("RAM"), "missing RAM: {text:?}");
         assert!(text.contains("GPU"), "missing GPU: {text:?}");
-        assert!(text.contains("VRAM"), "missing VRAM: {text:?}");
+        assert!(text.contains("7%"), "missing gpu util: {text:?}");
+        assert!(text.contains("(40%)"), "missing vram in parens: {text:?}");
     }
 
     #[test]

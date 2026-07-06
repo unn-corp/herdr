@@ -191,9 +191,11 @@ fn resize_background_tab_panes_for_desktop(
 /// strip off the top of `main_area` for it. Returns `(monitor_rect, remaining)`.
 /// Applied before the tab-bar/terminal split so both callers stay consistent.
 fn split_monitor_strip(app: &AppState, main_area: Rect) -> (Option<Rect>, Rect) {
-    if app.system_monitor_enabled && main_area.height > 2 {
+    // Two rows: the stat line on top plus a blank padding row below it, so the
+    // line has breathing room above (terminal edge) and below (the tab bar).
+    if app.system_monitor_enabled && main_area.height > 3 {
         let [monitor_rect, rest] =
-            Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).areas(main_area);
+            Layout::vertical([Constraint::Length(2), Constraint::Min(1)]).areas(main_area);
         (Some(monitor_rect), rest)
     } else {
         (None, main_area)
@@ -816,16 +818,16 @@ mod tests {
         let tab_bar_off = app.view.tab_bar_rect;
         let terminal_off = app.view.terminal_area;
 
-        // Enabled: a one-row strip is carved off the top of the main area, and
-        // the tab bar and terminal both shift down by one row.
+        // Enabled: a two-row strip (stat line + padding) is carved off the top
+        // of the main area, and the tab bar and terminal shift down by two rows.
         app.system_monitor_enabled = true;
         compute_view(&mut app, Rect::new(0, 0, 80, 20));
-        assert_eq!(app.view.monitor_rect, Rect::new(26, 0, 54, 1));
+        assert_eq!(app.view.monitor_rect, Rect::new(26, 0, 54, 2));
         assert_eq!(
             app.view.tab_bar_rect,
             Rect::new(
                 tab_bar_off.x,
-                tab_bar_off.y + 1,
+                tab_bar_off.y + 2,
                 tab_bar_off.width,
                 tab_bar_off.height
             )
@@ -834,9 +836,9 @@ mod tests {
             app.view.terminal_area,
             Rect::new(
                 terminal_off.x,
-                terminal_off.y + 1,
+                terminal_off.y + 2,
                 terminal_off.width,
-                terminal_off.height - 1
+                terminal_off.height - 2
             )
         );
     }
