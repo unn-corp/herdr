@@ -8,6 +8,7 @@ mod cache;
 mod collectors;
 mod context;
 mod install;
+mod models;
 mod poll;
 mod report;
 
@@ -124,11 +125,38 @@ fn run_collect(
             collect_codex(cache_root);
             Ok(std::process::ExitCode::SUCCESS)
         }
+        "opencode" => {
+            collect_pull(cache_root, "opencode");
+            Ok(std::process::ExitCode::SUCCESS)
+        }
+        "antigravity" => {
+            let _ = collectors::antigravity::run_statusline(cache_root);
+            Ok(std::process::ExitCode::SUCCESS)
+        }
         other => {
             eprintln!(
-                "herdr-context-usage: unknown collect agent '{other}' (supported: claude, codex)"
+                "herdr-context-usage: unknown collect agent '{other}' \
+                 (supported: claude, codex, opencode, antigravity)"
             );
             Ok(std::process::ExitCode::FAILURE)
+        }
+    }
+}
+
+/// Collect a pull-based agent (OpenCode) for the current pane by its cwd.
+fn collect_pull(cache_root: &std::path::Path, agent: &str) {
+    let ctx = PaneContext::from_env();
+    let Some(pane_id) = ctx.pane_id.clone() else {
+        eprintln!("herdr-context-usage: {agent} collect needs $HERDR_PANE_ID");
+        return;
+    };
+    let cwd = std::env::current_dir()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_default();
+    if agent == "opencode" {
+        if let Some(usage) = collectors::opencode::usage_for_cwd(&cwd) {
+            let record = collectors::opencode::record(&usage, &pane_id, &ctx, now_unix());
+            report::persist_and_report(cache_root, &record);
         }
     }
 }

@@ -13,7 +13,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::Deserialize;
 
-use crate::collectors::codex;
+use crate::collectors::{codex, opencode};
 use crate::context::{herdr_bin, PaneContext};
 use crate::report;
 
@@ -95,6 +95,14 @@ fn collect_pane(cache_root: &Path, pane: &Pane, now_unix: i64) -> bool {
         "codex" => {
             if let Some(usage) = codex::usage_for_cwd(cwd) {
                 let record = codex::record(&usage, &pane.pane_id, &pane.context(), now_unix);
+                report::persist_and_report(cache_root, &record);
+                return true;
+            }
+            false
+        }
+        "opencode" => {
+            if let Some(usage) = opencode::usage_for_cwd(cwd) {
+                let record = opencode::record(&usage, &pane.pane_id, &pane.context(), now_unix);
                 report::persist_and_report(cache_root, &record);
                 return true;
             }

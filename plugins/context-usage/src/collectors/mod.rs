@@ -5,5 +5,7 @@
 //! OpenCode, and Hermes adapters land in later phases behind the same cache
 //! contract.
 
+pub mod antigravity;
 pub mod claude;
 pub mod codex;
+pub mod opencode;

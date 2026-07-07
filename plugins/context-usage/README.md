@@ -26,12 +26,21 @@ from server state instead of reading cache files.
 | CLI | Context % | Reset timer | Source | How |
 | --- | --- | --- | --- | --- |
 | Claude Code | yes (Pro/Max sessions) | yes when present | statusLine `rate_limits` | push (statusLine hook) |
-| Codex | yes | no (none in local state) | rollout JSONL `token_count` / `model_context_window` | pull (`poll`) |
-| Antigravity, OpenCode, Hermes | planned | planned | later phases | - |
+| Codex | yes (official) | no (none in local state) | rollout JSONL `token_count` / `model_context_window` | pull (`poll`) |
+| OpenCode | yes (estimated) | no | SQLite `session` + last message `tokens.input`, sized by a model registry | pull (`poll`) |
+| Antigravity | harvester ready, unverified | when present | statusLine JSON (defensive parse) | push (statusLine hook) |
+| Hermes | prefer-native (its own bar) | - | n/a by default | Herdr defers to Hermes |
 
 "Context %" and "reset timer" are independent: a session can report one without
 the other. Reset times are only ever shown when the provider supplies a
-machine-readable value; they are never synthesized.
+machine-readable value; they are never synthesized. `official` = a provider
+percentage; `estimated` = token count sized against a model context-window
+registry.
+
+**Hermes** renders its own context bar, so Herdr defers to it by default
+(`[ui.context_usage.native] hermes = "prefer-native"`). Set `hermes =
+"prefer-herdr"` to have Herdr draw the segment too. The same per-agent key
+exists for every agent (`prefer-herdr` / `prefer-native` / `both` / `hidden`).
 
 **Push vs. pull.** Claude Code renders a statusLine on every turn, so its
 collector is invoked there and reports immediately. Codex has no such hook, so
