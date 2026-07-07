@@ -14,6 +14,14 @@ use crate::{
     detect::AgentState,
 };
 
+// Fixed, high-contrast status colors so the four agent states stay visually
+// distinct on every theme (several themes, e.g. vesper, collapse mauve/peach/
+// yellow into one peach hue) and readable over a transparent background.
+const STATE_BLOCKED: Color = Color::Rgb(255, 96, 96); // red
+const STATE_WORKING: Color = Color::Rgb(240, 200, 92); // yellow
+const STATE_DONE: Color = Color::Rgb(196, 156, 255); // purple
+const STATE_IDLE: Color = Color::Rgb(255, 150, 64); // orange
+
 pub(crate) fn copy_feedback_rect(
     area: Rect,
     feedback: &CopyFeedback,
@@ -195,10 +203,10 @@ pub(super) fn render_config_diagnostic(frame: &mut Frame, area: Rect, message: &
 
 pub(super) fn state_dot(state: AgentState, seen: bool, p: &Palette) -> (&'static str, Style) {
     match (state, seen) {
-        (AgentState::Blocked, _) => ("●", Style::default().fg(p.red)),
-        (AgentState::Working, _) => ("●", Style::default().fg(p.yellow)),
-        (AgentState::Idle, false) => ("●", Style::default().fg(p.mauve)),
-        (AgentState::Idle, true) => ("○", Style::default().fg(p.peach)),
+        (AgentState::Blocked, _) => ("●", Style::default().fg(STATE_BLOCKED)),
+        (AgentState::Working, _) => ("●", Style::default().fg(STATE_WORKING)),
+        (AgentState::Idle, false) => ("●", Style::default().fg(STATE_DONE)),
+        (AgentState::Idle, true) => ("○", Style::default().fg(STATE_IDLE)),
         (AgentState::Unknown, _) => ("·", Style::default().fg(p.overlay0)),
     }
 }
@@ -210,10 +218,13 @@ pub(super) fn agent_icon(
     p: &Palette,
 ) -> (&'static str, Style) {
     match (state, seen) {
-        (AgentState::Blocked, _) => ("◉", Style::default().fg(p.red)),
-        (AgentState::Working, _) => (super::spinner_frame(tick), Style::default().fg(p.yellow)),
-        (AgentState::Idle, false) => ("●", Style::default().fg(p.mauve)),
-        (AgentState::Idle, true) => ("✓", Style::default().fg(p.peach)),
+        (AgentState::Blocked, _) => ("◉", Style::default().fg(STATE_BLOCKED)),
+        (AgentState::Working, _) => (
+            super::spinner_frame(tick),
+            Style::default().fg(STATE_WORKING),
+        ),
+        (AgentState::Idle, false) => ("●", Style::default().fg(STATE_DONE)),
+        (AgentState::Idle, true) => ("✓", Style::default().fg(STATE_IDLE)),
         (AgentState::Unknown, _) => ("○", Style::default().fg(p.overlay0)),
     }
 }
@@ -230,10 +241,10 @@ pub(super) fn state_label(state: AgentState, seen: bool) -> &'static str {
 
 pub(super) fn state_label_color(state: AgentState, seen: bool, p: &Palette) -> Color {
     match (state, seen) {
-        (AgentState::Blocked, _) => p.red,
-        (AgentState::Working, _) => p.yellow,
-        (AgentState::Idle, false) => p.mauve,
-        (AgentState::Idle, true) => p.peach,
+        (AgentState::Blocked, _) => STATE_BLOCKED,
+        (AgentState::Working, _) => STATE_WORKING,
+        (AgentState::Idle, false) => STATE_DONE,
+        (AgentState::Idle, true) => STATE_IDLE,
         (AgentState::Unknown, _) => p.overlay0,
     }
 }

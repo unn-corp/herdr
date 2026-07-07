@@ -329,12 +329,14 @@ pub(super) fn render_tab_bar(app: &AppState, frame: &mut Frame, area: Rect) {
                 base.add_modifier(Modifier::BOLD)
             }
         } else if tab.is_auto_named() {
+            // Brighter than overlay0 so inactive tab labels stay legible when a
+            // transparent background removes the surface fill behind them.
             Style::default()
-                .fg(p.overlay0)
+                .fg(p.overlay1)
                 .bg(p.surface0)
                 .add_modifier(Modifier::DIM)
         } else {
-            Style::default().fg(p.overlay1).bg(p.surface0)
+            Style::default().fg(p.subtext0).bg(p.surface0)
         };
         let width = rect.width as usize;
         let name = tab_chrome_label(ws, idx);

@@ -1083,7 +1083,7 @@ mod tests {
         let auto_style = buffer[(auto_rect.x + 1, auto_rect.y)].style();
         let custom_style = buffer[(custom_rect.x + 1, custom_rect.y)].style();
 
-        assert_eq!(auto_style.fg, Some(app.palette.overlay0));
+        assert_eq!(auto_style.fg, Some(app.palette.overlay1));
         assert!(auto_style.add_modifier.contains(Modifier::DIM));
         // Active tab text is black/white by accent luminance (catppuccin's light
         // blue accent -> black), so it stays readable on any theme.
