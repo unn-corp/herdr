@@ -1003,6 +1003,9 @@ pub struct ContextUsageConfig {
     pub show_reset: bool,
     /// Show the model name alongside usage. Default: false.
     pub show_model: bool,
+    /// Per-agent preference for whether Herdr draws its own usage segment or
+    /// defers to the agent's native context display.
+    pub native: NativePreferences,
 }
 
 impl Default for ContextUsageConfig {
@@ -1012,6 +1015,62 @@ impl Default for ContextUsageConfig {
             bar_width: 8,
             show_reset: true,
             show_model: false,
+            native: NativePreferences::default(),
+        }
+    }
+}
+
+/// Whether Herdr should show its own context-usage segment for an agent, or
+/// defer to the agent's own native context display.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum NativePreference {
+    /// Herdr draws the segment (the default for agents without a native bar).
+    PreferHerdr,
+    /// Defer to the agent's native display; Herdr draws nothing.
+    PreferNative,
+    /// Draw Herdr's segment even though the agent has a native display too.
+    Both,
+    /// Never draw the segment for this agent.
+    Hidden,
+}
+
+/// `[ui.context_usage.native]` - per-agent native-display preference. Agents
+/// that render their own healthy context bar (Hermes) default to `prefer-native`
+/// so Herdr does not duplicate them; the rest default to `prefer-herdr`.
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(default)]
+pub struct NativePreferences {
+    pub claude: NativePreference,
+    pub codex: NativePreference,
+    pub antigravity: NativePreference,
+    pub opencode: NativePreference,
+    pub hermes: NativePreference,
+}
+
+impl Default for NativePreferences {
+    fn default() -> Self {
+        Self {
+            claude: NativePreference::PreferHerdr,
+            codex: NativePreference::PreferHerdr,
+            antigravity: NativePreference::PreferHerdr,
+            opencode: NativePreference::PreferHerdr,
+            // Hermes renders its own context bar, so don't duplicate it.
+            hermes: NativePreference::PreferNative,
+        }
+    }
+}
+
+impl NativePreferences {
+    /// The preference for `agent`; unknown agents default to `prefer-herdr`.
+    pub fn for_agent(&self, agent: &str) -> NativePreference {
+        match agent {
+            "claude" => self.claude,
+            "codex" => self.codex,
+            "antigravity" => self.antigravity,
+            "opencode" => self.opencode,
+            "hermes" => self.hermes,
+            _ => NativePreference::PreferHerdr,
         }
     }
 }
@@ -1254,6 +1313,40 @@ show_model = true
         // Unspecified fields keep their defaults.
         assert!(config.ui.context_usage.show_reset);
         assert!(config.ui.context_usage.show_model);
+    }
+
+    #[test]
+    fn context_usage_native_preferences_default_and_parse() {
+        let native = ContextUsageConfig::default().native;
+        // Hermes defers to its own bar by default; others are drawn by Herdr.
+        assert_eq!(native.hermes, NativePreference::PreferNative);
+        assert_eq!(native.claude, NativePreference::PreferHerdr);
+        assert_eq!(native.for_agent("hermes"), NativePreference::PreferNative);
+        // Unknown agents default to prefer-herdr.
+        assert_eq!(
+            native.for_agent("unknown-agent"),
+            NativePreference::PreferHerdr
+        );
+
+        let toml = r#"
+[ui.context_usage.native]
+hermes = "prefer-herdr"
+claude = "hidden"
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        assert_eq!(
+            config.ui.context_usage.native.hermes,
+            NativePreference::PreferHerdr
+        );
+        assert_eq!(
+            config.ui.context_usage.native.claude,
+            NativePreference::Hidden
+        );
+        // Unspecified agents keep their default.
+        assert_eq!(
+            config.ui.context_usage.native.codex,
+            NativePreference::PreferHerdr
+        );
     }
 
     #[test]

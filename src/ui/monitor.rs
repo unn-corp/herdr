@@ -66,6 +66,15 @@ fn push_context_usage_spans(
         .into_iter()
         .filter_map(|pane_id| app.effective_pane_usage(pane_id, now))
         .filter(|info| info.used_pct.is_some())
+        // Defer to an agent's native context display when configured to (Hermes
+        // renders its own bar, so it is prefer-native by default).
+        .filter(|info| {
+            use crate::config::NativePreference;
+            matches!(
+                cfg.native.for_agent(info.agent.as_deref().unwrap_or("")),
+                NativePreference::PreferHerdr | NativePreference::Both
+            )
+        })
         .collect();
     if entries.is_empty() {
         return;
@@ -414,5 +423,33 @@ mod tests {
         assert_eq!(humanize_reset(1000 + 8040, 1000).as_deref(), Some("2h14m"));
         assert_eq!(humanize_reset(1000 + 600, 1000).as_deref(), Some("10m"));
         assert_eq!(humanize_reset(1000, 1000), None);
+    }
+
+    fn hermes_usage(pct: u8) -> crate::api::schema::PaneUsageInfo {
+        crate::api::schema::PaneUsageInfo {
+            agent: Some("hermes".into()),
+            ..usage(Some(pct))
+        }
+    }
+
+    #[test]
+    fn hermes_pane_suppressed_by_prefer_native_default() {
+        let app = app_with_usage(hermes_usage(80));
+        let text = render_to_string(&app, 100);
+        assert!(
+            !text.contains("ctx"),
+            "hermes should default to prefer-native (suppressed): {text:?}"
+        );
+    }
+
+    #[test]
+    fn hermes_pane_shows_when_prefer_herdr() {
+        let mut app = app_with_usage(hermes_usage(80));
+        app.context_usage.native.hermes = crate::config::NativePreference::PreferHerdr;
+        let text = render_to_string(&app, 100);
+        assert!(
+            text.contains("ctx") && text.contains("80%"),
+            "hermes should render when overridden to prefer-herdr: {text:?}"
+        );
     }
 }
