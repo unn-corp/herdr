@@ -1085,14 +1085,14 @@ mod tests {
 
         assert_eq!(auto_style.fg, Some(app.palette.overlay1));
         assert!(auto_style.add_modifier.contains(Modifier::DIM));
-        // Active tab text is black/white by accent luminance (catppuccin's light
-        // blue accent -> black), so it stays readable on any theme.
-        assert_eq!(custom_style.fg, Some(Color::Black));
+        // Active tab: bright text, bold, accent underline (no filled pill).
+        assert_eq!(custom_style.fg, Some(app.palette.text));
+        assert!(custom_style.add_modifier.contains(Modifier::UNDERLINED));
         assert!(custom_style.add_modifier.contains(Modifier::BOLD));
     }
 
     #[test]
-    fn tab_bar_active_tab_uses_luminance_contrast_even_when_backgrounds_reset() {
+    fn tab_bar_active_tab_uses_accent_underline_not_fill() {
         let mut app = crate::app::state::AppState::test_new();
         let mut ws = Workspace::test_new("test");
         let custom_tab = ws.test_add_tab(Some("logs"));
@@ -1117,8 +1117,11 @@ mod tests {
         let custom_rect = app.view.tab_hit_areas[1];
         let custom_style = buffer[(custom_rect.x + 1, custom_rect.y)].style();
 
-        assert_eq!(custom_style.bg, Some(app.palette.accent));
-        assert_eq!(custom_style.fg, Some(Color::Black));
+        // Active tab: bright text + accent underline, no filled accent background.
+        assert_ne!(custom_style.bg, Some(app.palette.accent));
+        assert_eq!(custom_style.fg, Some(app.palette.text));
+        assert!(custom_style.add_modifier.contains(Modifier::UNDERLINED));
+        assert_eq!(custom_style.underline_color, Some(app.palette.accent));
         assert!(custom_style.add_modifier.contains(Modifier::BOLD));
     }
 
