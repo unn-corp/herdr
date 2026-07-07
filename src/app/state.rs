@@ -1144,11 +1144,24 @@ impl ContextMenuState {
                 is_linked_worktree: false,
                 has_worktree_children: false,
                 ..
-            } => &["Rename", "Close", "New worktree", "Open worktree..."],
+            } => &[
+                "Rename",
+                "Set Default Directory",
+                "Clear Default Directory",
+                "Close",
+                "New worktree",
+                "Open worktree...",
+            ],
             ContextMenuKind::GitWorkspace {
                 is_linked_worktree: true,
                 ..
-            } => &["Rename", "Close", "Delete worktree checkout..."],
+            } => &[
+                "Rename",
+                "Set Default Directory",
+                "Clear Default Directory",
+                "Close",
+                "Delete worktree checkout...",
+            ],
             ContextMenuKind::GitWorkspace {
                 is_linked_worktree: false,
                 has_worktree_children: true,
@@ -1156,6 +1169,8 @@ impl ContextMenuState {
                 ..
             } => &[
                 "Rename",
+                "Set Default Directory",
+                "Clear Default Directory",
                 "Close group",
                 "New worktree",
                 "Open worktree...",
@@ -1168,6 +1183,8 @@ impl ContextMenuState {
                 ..
             } => &[
                 "Rename",
+                "Set Default Directory",
+                "Clear Default Directory",
                 "Close group",
                 "New worktree",
                 "Open worktree...",
@@ -1419,6 +1436,9 @@ pub struct AppState {
     pub system_monitor_enabled: bool,
     /// Latest CPU/RAM/GPU sample for the monitor strip, or `None` until first sampled.
     pub system_monitor: Option<crate::platform::SystemSample>,
+    /// Per-pane git branch + uncommitted count, keyed by pane. Refreshed in the
+    /// background so the strip and agent sidebar can show per-conversation git.
+    pub pane_git: std::collections::HashMap<PaneId, crate::workspace::PaneGitStatus>,
     pub pane_history_persistence: bool,
     /// Expose the focused pane's cursor anchor to the outer terminal even when
     /// the pane requested `?25l`. See `[experimental] reveal_hidden_cursor_for_cjk_ime`.
@@ -1780,6 +1800,7 @@ impl AppState {
             hide_tab_bar_when_single_tab: false,
             system_monitor_enabled: false,
             system_monitor: None,
+            pane_git: std::collections::HashMap::new(),
             pane_history_persistence: false,
             reveal_hidden_cursor_for_cjk_ime: false,
             cjk_ime_agent_filter_configured: false,
@@ -2273,7 +2294,13 @@ mod tests {
 
         assert_eq!(
             menu.items(),
-            &["Rename", "Close", "Delete worktree checkout..."]
+            &[
+                "Rename",
+                "Set Default Directory",
+                "Clear Default Directory",
+                "Close",
+                "Delete worktree checkout..."
+            ]
         );
     }
 
@@ -2293,7 +2320,14 @@ mod tests {
 
         assert_eq!(
             menu.items(),
-            &["Rename", "Close", "New worktree", "Open worktree..."]
+            &[
+                "Rename",
+                "Set Default Directory",
+                "Clear Default Directory",
+                "Close",
+                "New worktree",
+                "Open worktree..."
+            ]
         );
     }
 
@@ -2315,6 +2349,8 @@ mod tests {
             menu.items(),
             &[
                 "Rename",
+                "Set Default Directory",
+                "Clear Default Directory",
                 "Close group",
                 "New worktree",
                 "Open worktree...",

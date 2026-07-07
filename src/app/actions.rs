@@ -2571,9 +2571,11 @@ impl AppState {
             AppEvent::GitStatusRefreshed {
                 results,
                 cache_updates,
+                pane_statuses,
             } => {
                 let _ = results;
                 let _ = cache_updates;
+                let _ = pane_statuses;
                 Vec::new()
             }
             AppEvent::WorktreeAddFinished(_) => Vec::new(),

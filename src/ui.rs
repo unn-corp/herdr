@@ -1028,6 +1028,9 @@ mod tests {
         ws.identity_cwd = repo.clone();
         let root_pane = ws.tabs[0].root_pane;
         ws.refresh_git_ahead_behind();
+        // The space's second row now shows its default directory (branch is shown
+        // per-conversation in the strip/agent rows instead).
+        ws.set_default_cwd(Some("~/proj".to_string()));
 
         app.workspaces = vec![ws];
         app.ensure_test_terminals();
@@ -1051,7 +1054,7 @@ mod tests {
 
         assert!(line1.starts_with(" · one"));
         assert!(!line1.contains("1 one"));
-        assert_eq!(line2, "   main");
+        assert!(line2.contains("↪ ~/proj"), "line2: {line2:?}");
 
         std::fs::remove_dir_all(repo).ok();
     }
@@ -1082,18 +1085,23 @@ mod tests {
 
         assert_eq!(auto_style.fg, Some(app.palette.overlay0));
         assert!(auto_style.add_modifier.contains(Modifier::DIM));
-        assert_eq!(custom_style.fg, Some(app.palette.panel_bg));
+        // Active tab text is black/white by accent luminance (catppuccin's light
+        // blue accent -> black), so it stays readable on any theme.
+        assert_eq!(custom_style.fg, Some(Color::Black));
         assert!(custom_style.add_modifier.contains(Modifier::BOLD));
     }
 
     #[test]
-    fn tab_bar_uses_surface_dim_when_panel_background_resets() {
+    fn tab_bar_active_tab_uses_luminance_contrast_even_when_backgrounds_reset() {
         let mut app = crate::app::state::AppState::test_new();
         let mut ws = Workspace::test_new("test");
         let custom_tab = ws.test_add_tab(Some("logs"));
         ws.switch_tab(custom_tab);
 
+        // Transparent theme zeroes out panel_bg/surface_dim; the contrast fg must
+        // still resolve to black/white from the accent luminance, not to Reset.
         app.palette.panel_bg = Color::Reset;
+        app.palette.surface_dim = Color::Reset;
         app.workspaces = vec![ws];
         app.active = Some(0);
         app.selected = 0;
@@ -1110,7 +1118,7 @@ mod tests {
         let custom_style = buffer[(custom_rect.x + 1, custom_rect.y)].style();
 
         assert_eq!(custom_style.bg, Some(app.palette.accent));
-        assert_eq!(custom_style.fg, Some(app.palette.surface_dim));
+        assert_eq!(custom_style.fg, Some(Color::Black));
         assert!(custom_style.add_modifier.contains(Modifier::BOLD));
     }
 

@@ -1934,7 +1934,13 @@ mod tests {
         };
         let mut terminal_runtimes = crate::terminal::TerminalRuntimeRegistry::new();
 
-        apply_context_menu_action(&mut state, &mut terminal_runtimes, menu, 1);
+        // "Close group" is index 3 now that Set/Clear Default Directory precede it.
+        let close_group_idx = menu
+            .items()
+            .iter()
+            .position(|item| *item == "Close group")
+            .expect("close group item");
+        apply_context_menu_action(&mut state, &mut terminal_runtimes, menu, close_group_idx);
 
         assert_eq!(state.selected, 0);
         assert_eq!(state.mode, Mode::ConfirmClose);

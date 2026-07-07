@@ -19,6 +19,12 @@ pub(crate) struct WorkspaceGitRefreshItem {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct PaneGitRefreshItem {
+    pub(crate) pane_id: crate::layout::PaneId,
+    pub(crate) cache_key: std::path::PathBuf,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct WorkspaceGitRefreshTarget {
     pub(crate) workspace_id: String,
     pub(crate) resolved_identity_cwd: std::path::PathBuf,
@@ -573,14 +579,17 @@ impl App {
             return;
         }
 
+        let panes = self.pane_git_refresh_items();
         self.git_refresh_in_flight = true;
         let event_tx = self.event_tx.clone();
         let cache = self.git_status_cache.clone();
         std::thread::spawn(move || {
             let output = refresh_workspace_git_statuses_with_cache(workspaces, &cache);
+            let pane_statuses = refresh_pane_git_statuses(panes, &cache);
             let _ = event_tx.blocking_send(AppEvent::GitStatusRefreshed {
                 results: output.results,
                 cache_updates: output.cache_updates,
+                pane_statuses,
             });
         });
     }
@@ -672,6 +681,26 @@ impl App {
             .collect()
     }
 
+    /// One item per pane, resolving each pane's working directory to its git repo
+    /// so the strip and sidebar can show per-conversation branches.
+    fn pane_git_refresh_items(&self) -> Vec<PaneGitRefreshItem> {
+        let mut items = Vec::new();
+        for ws in &self.state.workspaces {
+            for tab in &ws.tabs {
+                for &pane_id in tab.panes.keys() {
+                    let Some(cwd) =
+                        tab.cwd_for_pane(pane_id, &self.state.terminals, &self.terminal_runtimes)
+                    else {
+                        continue;
+                    };
+                    let cache_key = crate::workspace::git_status_cache_key(&cwd).unwrap_or(cwd);
+                    items.push(PaneGitRefreshItem { pane_id, cache_key });
+                }
+            }
+        }
+        items
+    }
+
     pub(crate) fn drain_internal_events(&mut self) -> bool {
         self.drain_internal_events_up_to(super::APP_EVENT_DRAIN_LIMIT)
     }
@@ -726,6 +755,34 @@ pub(crate) fn deduplicate_git_refresh_items(
     }
 
     jobs
+}
+
+/// Resolve per-pane git (branch + uncommitted count), keyed by pane. Repos are
+/// computed once per distinct repo root and shared across panes in the same repo.
+pub(crate) fn refresh_pane_git_statuses(
+    panes: Vec<PaneGitRefreshItem>,
+    cache: &HashMap<std::path::PathBuf, GitStatusCacheEntry>,
+) -> Vec<(crate::layout::PaneId, crate::workspace::PaneGitStatus)> {
+    let mut by_key: HashMap<std::path::PathBuf, crate::workspace::PaneGitStatus> = HashMap::new();
+    panes
+        .into_iter()
+        .map(|item| {
+            let status = by_key
+                .entry(item.cache_key.clone())
+                .or_insert_with(|| {
+                    let (snapshot, _) = Workspace::git_status_snapshot_for_cwd_with_cache(
+                        &item.cache_key,
+                        cache.get(&item.cache_key),
+                    );
+                    crate::workspace::PaneGitStatus {
+                        branch: snapshot.branch,
+                        dirty: snapshot.dirty,
+                    }
+                })
+                .clone();
+            (item.pane_id, status)
+        })
+        .collect()
 }
 
 pub(crate) fn refresh_workspace_git_statuses_with_cache(
@@ -896,6 +953,7 @@ mod tests {
         app.handle_internal_event(crate::events::AppEvent::GitStatusRefreshed {
             results: Vec::new(),
             cache_updates: Vec::new(),
+            pane_statuses: Vec::new(),
         });
 
         assert!(!app.git_refresh_in_flight);

@@ -1353,11 +1353,15 @@ mod tests {
         let first_root = first.tabs[0].root_pane;
         first.identity_cwd = first_repo.clone();
         first.refresh_git_ahead_behind();
+        // A default directory makes the workspace row two lines tall (the second
+        // line now shows the default dir rather than the branch).
+        first.set_default_cwd(Some("~/a".to_string()));
 
         let mut second = Workspace::test_new("b");
         let second_root = second.tabs[0].root_pane;
         second.identity_cwd = second_repo.clone();
         second.refresh_git_ahead_behind();
+        second.set_default_cwd(Some("~/b".to_string()));
 
         app.state.workspaces = vec![first, second];
         app.state.ensure_test_terminals();

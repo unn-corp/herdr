@@ -58,6 +58,14 @@ pub struct WorkspaceGitStatusSnapshot {
     pub space: Option<GitSpaceMetadata>,
 }
 
+/// Git branch + uncommitted count for a single pane's working directory. Used to
+/// show per-conversation git status in the monitor strip and agent sidebar.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct PaneGitStatus {
+    pub branch: Option<String>,
+    pub dirty: Option<usize>,
+}
+
 impl WorkspaceGitStatusSnapshot {
     pub fn into_workspace_status(
         self,
@@ -1092,13 +1100,11 @@ impl Workspace {
         self.cached_git_branch.clone()
     }
 
+    // Still exercised by the git-refresh tests; the ahead/behind counts are no
+    // longer surfaced in the sidebar now that branch/status is per-conversation.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn git_ahead_behind(&self) -> Option<(usize, usize)> {
         self.cached_git_ahead_behind
-    }
-
-    /// Count of uncommitted changes in the workspace repo, if known.
-    pub fn git_dirty(&self) -> Option<usize> {
-        self.cached_git_dirty
     }
 
     pub fn git_space(&self) -> Option<&GitSpaceMetadata> {

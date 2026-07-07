@@ -645,6 +645,7 @@ impl App {
             hide_tab_bar_when_single_tab: config.ui.hide_tab_bar_when_single_tab,
             system_monitor_enabled: config.ui.system_monitor,
             system_monitor: None,
+            pane_git: std::collections::HashMap::new(),
             pane_history_persistence: config.experimental.pane_history,
             reveal_hidden_cursor_for_cjk_ime: config.experimental.reveal_hidden_cursor_for_cjk_ime,
             cjk_ime_agent_filter_configured: !config.experimental.cjk_ime_agents.is_empty(),
@@ -2063,6 +2064,7 @@ mod tests {
         app.handle_internal_event(AppEvent::GitStatusRefreshed {
             results: Vec::new(),
             cache_updates: Vec::new(),
+            pane_statuses: Vec::new(),
         });
 
         assert!(!app.git_refresh_in_flight);
@@ -2087,6 +2089,7 @@ mod tests {
                 space: None,
             }],
             cache_updates: Vec::new(),
+            pane_statuses: Vec::new(),
         });
 
         assert!(app.render_dirty.load(Ordering::Acquire));

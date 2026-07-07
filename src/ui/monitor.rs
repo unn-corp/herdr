@@ -28,34 +28,57 @@ pub(super) fn render_system_monitor(app: &AppState, frame: &mut Frame, area: Rec
         Some(sample) => metric_spans(sample, p),
         None => vec![Span::styled(" sampling…", Style::default().fg(p.overlay0))],
     };
-    // Git status for the active space's repo, updating as you move between spaces.
-    if let Some(ws) = app.active.and_then(|idx| app.workspaces.get(idx)) {
-        push_git_spans(&mut spans, ws, p);
+    // Git status per conversation: show each distinct branch among the active
+    // tab's panes, so a split tab with several branches shows all of them.
+    if let Some(tab) = app
+        .active
+        .and_then(|idx| app.workspaces.get(idx))
+        .and_then(|ws| ws.tabs.get(ws.active_tab))
+    {
+        push_tab_git_spans(&mut spans, tab, &app.pane_git, p);
     }
 
     frame.render_widget(Paragraph::new(Line::from(spans)).style(background), area);
 }
 
-fn push_git_spans(spans: &mut Vec<Span<'static>>, ws: &crate::workspace::Workspace, p: &Palette) {
-    let branch = ws.branch();
-    let dirty = ws.git_dirty();
-    if branch.is_none() && dirty.is_none() {
-        return;
+fn push_tab_git_spans(
+    spans: &mut Vec<Span<'static>>,
+    tab: &crate::workspace::Tab,
+    pane_git: &std::collections::HashMap<crate::layout::PaneId, crate::workspace::PaneGitStatus>,
+    p: &Palette,
+) {
+    // Collect the distinct (branch, dirty) among the tab's panes, then sort for a
+    // stable left-to-right order (pane ids have no meaningful ordering here).
+    let mut shown: Vec<(Option<String>, Option<usize>)> = Vec::new();
+    for pane_id in tab.panes.keys() {
+        let Some(status) = pane_git.get(pane_id) else {
+            continue;
+        };
+        if status.branch.is_none() && status.dirty.unwrap_or(0) == 0 {
+            continue;
+        }
+        let key = (status.branch.clone(), status.dirty);
+        if !shown.contains(&key) {
+            shown.push(key);
+        }
     }
-    push_separator(spans, p);
-    if let Some(branch) = branch {
-        spans.push(Span::styled(
-            branch,
-            Style::default().fg(p.mauve).add_modifier(Modifier::BOLD),
-        ));
-    }
-    match dirty {
-        Some(count) if count > 0 => spans.push(Span::styled(
-            format!("  +{count}"),
-            Style::default().fg(p.yellow).add_modifier(Modifier::BOLD),
-        )),
-        Some(_) => spans.push(Span::styled("  ✓", Style::default().fg(p.green))),
-        None => {}
+    shown.sort();
+    for (branch, dirty) in shown {
+        push_separator(spans, p);
+        if let Some(branch) = branch {
+            spans.push(Span::styled(
+                branch,
+                Style::default().fg(p.mauve).add_modifier(Modifier::BOLD),
+            ));
+        }
+        match dirty {
+            Some(count) if count > 0 => spans.push(Span::styled(
+                format!("  +{count}"),
+                Style::default().fg(p.yellow).add_modifier(Modifier::BOLD),
+            )),
+            Some(_) => spans.push(Span::styled("  ✓", Style::default().fg(p.green))),
+            None => {}
+        }
     }
 }
 

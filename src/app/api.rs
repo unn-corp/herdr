@@ -86,6 +86,7 @@ impl App {
         if let AppEvent::GitStatusRefreshed {
             results,
             cache_updates,
+            pane_statuses,
         } = ev
         {
             self.git_refresh_in_flight = false;
@@ -98,10 +99,15 @@ impl App {
             } else {
                 self.last_git_remote_status_refresh = Instant::now();
             }
-            if self
+            let mut changed = self
                 .state
-                .apply_workspace_git_statuses(&self.terminal_runtimes, results)
-            {
+                .apply_workspace_git_statuses(&self.terminal_runtimes, results);
+            let new_pane_git: std::collections::HashMap<_, _> = pane_statuses.into_iter().collect();
+            if self.state.pane_git != new_pane_git {
+                self.state.pane_git = new_pane_git;
+                changed = true;
+            }
+            if changed {
                 self.render_dirty.store(true, Ordering::Release);
                 self.render_notify.notify_one();
             }

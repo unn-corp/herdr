@@ -145,6 +145,7 @@ pub enum AppEvent {
     GitStatusRefreshed {
         results: Vec<WorkspaceGitStatus>,
         cache_updates: Vec<(std::path::PathBuf, GitStatusCacheEntry)>,
+        pane_statuses: Vec<(crate::layout::PaneId, crate::workspace::PaneGitStatus)>,
     },
     /// A plugin action or event command finished.
     PluginCommandFinished {
