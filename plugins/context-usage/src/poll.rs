@@ -13,7 +13,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::Deserialize;
 
-use crate::collectors::{codex, opencode};
+use crate::collectors::{codex, hermes, opencode};
 use crate::context::{herdr_bin, PaneContext};
 use crate::report;
 
@@ -103,6 +103,17 @@ fn collect_pane(cache_root: &Path, pane: &Pane, now_unix: i64) -> bool {
         "opencode" => {
             if let Some(usage) = opencode::usage_for_cwd(cwd) {
                 let record = opencode::record(&usage, &pane.pane_id, &pane.context(), now_unix);
+                report::persist_and_report(cache_root, &record);
+                return true;
+            }
+            false
+        }
+        "hermes" => {
+            // Collect even though Hermes defaults to prefer-native display: the
+            // record still powers detail panels, and shows in the strip if the
+            // user set hermes = "prefer-herdr".
+            if let Some(usage) = hermes::usage_for_cwd(cwd) {
+                let record = hermes::record(&usage, &pane.pane_id, &pane.context(), now_unix);
                 report::persist_and_report(cache_root, &record);
                 return true;
             }

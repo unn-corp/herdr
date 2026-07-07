@@ -125,8 +125,8 @@ fn run_collect(
             collect_codex(cache_root);
             Ok(std::process::ExitCode::SUCCESS)
         }
-        "opencode" => {
-            collect_pull(cache_root, "opencode");
+        "opencode" | "hermes" => {
+            collect_pull(cache_root, agent);
             Ok(std::process::ExitCode::SUCCESS)
         }
         "antigravity" => {
@@ -136,7 +136,7 @@ fn run_collect(
         other => {
             eprintln!(
                 "herdr-context-usage: unknown collect agent '{other}' \
-                 (supported: claude, codex, opencode, antigravity)"
+                 (supported: claude, codex, opencode, hermes, antigravity)"
             );
             Ok(std::process::ExitCode::FAILURE)
         }
@@ -153,11 +153,20 @@ fn collect_pull(cache_root: &std::path::Path, agent: &str) {
     let cwd = std::env::current_dir()
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_default();
-    if agent == "opencode" {
-        if let Some(usage) = collectors::opencode::usage_for_cwd(&cwd) {
-            let record = collectors::opencode::record(&usage, &pane_id, &ctx, now_unix());
-            report::persist_and_report(cache_root, &record);
+    match agent {
+        "opencode" => {
+            if let Some(usage) = collectors::opencode::usage_for_cwd(&cwd) {
+                let record = collectors::opencode::record(&usage, &pane_id, &ctx, now_unix());
+                report::persist_and_report(cache_root, &record);
+            }
         }
+        "hermes" => {
+            if let Some(usage) = collectors::hermes::usage_for_cwd(&cwd) {
+                let record = collectors::hermes::record(&usage, &pane_id, &ctx, now_unix());
+                report::persist_and_report(cache_root, &record);
+            }
+        }
+        _ => {}
     }
 }
 
