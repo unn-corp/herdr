@@ -3,13 +3,19 @@
 //! Hermes renders its own native context bar, so Herdr defers to it by default
 //! (`[ui.context_usage.native] hermes = "prefer-native"`). When a user opts a
 //! Hermes pane into `prefer-herdr`, this collector supplies the number from
-//! Hermes's local SQLite state at `~/.hermes/state.db`: the `sessions` table has
-//! a `cwd` (maps to the pane), a `model`, and `input_tokens`, which we size
-//! against the model context-window registry.
+//! Hermes's local SQLite state at `~/.hermes/state.db`. The `sessions` table has
+//! a `cwd` (maps to the pane) and a `model`, but its token columns are session
+//! *totals* (`input_tokens`, `cache_read_tokens` summed over every API call),
+//! and per-message `token_count` is not populated, so neither gives the current
+//! context size directly.
 //!
-//! `input_tokens` is Hermes's own accumulated input figure, and Hermes compacts
-//! context, so this is an estimate — reported with `estimated` confidence, never
-//! as an official provider percentage. No reset timer exists in Hermes state.
+//! We estimate current context occupancy as the average total input per API
+//! call: `(input_tokens + cache_read_tokens) / api_call_count`. Each call
+//! submits the active conversation as input (a cached prefix plus fresh tokens),
+//! so this approximates the typical context window fill far better than the
+//! cumulative total, which would clamp to 100% on any real session. It is an
+//! estimate — reported with `estimated` confidence, never an official provider
+//! percentage. No reset timer exists in Hermes state.
 
 use std::path::PathBuf;
 
@@ -26,6 +32,7 @@ const DEFAULT_STALE_AFTER_SECONDS: u64 = 900;
 pub struct HermesUsage {
     pub session_id: Option<String>,
     pub model: Option<String>,
+    /// Estimated current context occupancy: average total input per API call.
     pub used_tokens: Option<u64>,
 }
 
@@ -55,22 +62,43 @@ pub fn usage_for_cwd(cwd: &str) -> Option<HermesUsage> {
     query_usage(&conn, cwd)
 }
 
-/// Newest (active-first) session for `cwd` with a nonzero input-token count.
+/// Newest (active-first) session for `cwd` that has made at least one API call.
+/// Estimates current context as the average total input per API call.
 fn query_usage(conn: &Connection, cwd: &str) -> Option<HermesUsage> {
-    let (session_id, model, input_tokens): (String, Option<String>, i64) = conn
+    let (session_id, model, input_tokens, cache_read_tokens, api_call_count): (
+        String,
+        Option<String>,
+        i64,
+        i64,
+        i64,
+    ) = conn
         .query_row(
-            "SELECT id, model, COALESCE(input_tokens, 0) FROM sessions \
-             WHERE cwd = ?1 AND COALESCE(input_tokens, 0) > 0 \
+            "SELECT id, model, COALESCE(input_tokens, 0), COALESCE(cache_read_tokens, 0), \
+                    COALESCE(api_call_count, 0) FROM sessions \
+             WHERE cwd = ?1 AND COALESCE(api_call_count, 0) > 0 \
              ORDER BY (ended_at IS NULL) DESC, started_at DESC LIMIT 1",
             [cwd],
-            |row| Ok((row.get(0)?, row.get::<_, Option<String>>(1)?, row.get(2)?)),
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
         )
         .ok()?;
+
+    // Average total input (cached prefix + fresh) per API call.
+    let calls = api_call_count.max(1);
+    let total_input = input_tokens.saturating_add(cache_read_tokens);
+    let per_call = u64::try_from(total_input / calls).ok()?;
 
     Some(HermesUsage {
         session_id: Some(session_id),
         model: model.filter(|m| !m.is_empty()),
-        used_tokens: u64::try_from(input_tokens).ok(),
+        used_tokens: (per_call > 0).then_some(per_call),
     })
 }
 
@@ -128,25 +156,29 @@ mod tests {
     use super::*;
 
     fn seed_db() -> Connection {
+        // Columns: input_tokens, cache_read_tokens, api_call_count are session
+        // totals; current context is estimated as (input+cache_read)/api_calls.
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(
             "CREATE TABLE sessions (id TEXT, cwd TEXT, model TEXT, input_tokens INTEGER, \
-                 started_at INTEGER, ended_at INTEGER);
-             INSERT INTO sessions VALUES ('old','/proj','codex/gpt-5.5',10000,100,150);
-             INSERT INTO sessions VALUES ('active','/proj','codex/gpt-5.5',80000,200,NULL);
-             INSERT INTO sessions VALUES ('empty','/proj','codex/gpt-5.5',0,300,NULL);
-             INSERT INTO sessions VALUES ('elsewhere','/other','agent-fallback',5000,400,NULL);",
+                 cache_read_tokens INTEGER, api_call_count INTEGER, started_at INTEGER, \
+                 ended_at INTEGER);
+             INSERT INTO sessions VALUES ('old','/proj','codex/gpt-5.5',300000,100000,8,100,150);
+             INSERT INTO sessions VALUES ('active','/proj','codex/gpt-5.5',600000,400000,10,200,NULL);
+             INSERT INTO sessions VALUES ('nocalls','/proj','codex/gpt-5.5',0,0,0,300,NULL);
+             INSERT INTO sessions VALUES ('elsewhere','/other','agent-fallback',50000,10000,6,400,NULL);",
         )
         .unwrap();
         conn
     }
 
     #[test]
-    fn prefers_active_nonzero_session_for_cwd() {
+    fn prefers_active_session_and_averages_input_per_call() {
         let conn = seed_db();
         let usage = query_usage(&conn, "/proj").expect("usage");
         assert_eq!(usage.session_id.as_deref(), Some("active"));
-        assert_eq!(usage.used_tokens, Some(80000));
+        // (600000 + 400000) / 10 api calls = 100000 tokens of current context.
+        assert_eq!(usage.used_tokens, Some(100000));
         assert_eq!(usage.model.as_deref(), Some("codex/gpt-5.5"));
     }
 
@@ -155,8 +187,8 @@ mod tests {
         let conn = seed_db();
         let usage = query_usage(&conn, "/proj").unwrap();
         let rec = record(&usage, "w1:p2", &PaneContext::default(), 0);
-        // gpt-5.5 -> 400000 window; 80000/400000 = 20%.
-        assert_eq!(rec.used_pct, Some(20));
+        // gpt-5.5 -> 400000 window; 100000/400000 = 25%.
+        assert_eq!(rec.used_pct, Some(25));
         assert_eq!(rec.confidence, Confidence::Estimated);
         assert_eq!(rec.agent.as_deref(), Some("hermes"));
         // model_family strips the "codex/" provider prefix and version.
@@ -168,11 +200,21 @@ mod tests {
     fn unknown_model_reports_tokens_only() {
         let conn = seed_db();
         let usage = query_usage(&conn, "/other").unwrap();
+        // (50000 + 10000) / 6 = 10000 estimated current context.
+        assert_eq!(usage.used_tokens, Some(10000));
         let rec = record(&usage, "w1:p2", &PaneContext::default(), 0);
-        // "agent-fallback" is not in the registry.
+        // "agent-fallback" is not in the registry, so no percentage.
         assert_eq!(rec.used_pct, None);
-        assert_eq!(rec.used_tokens, Some(5000));
+        assert_eq!(rec.used_tokens, Some(10000));
         assert!(!rec.notes.is_empty());
+    }
+
+    #[test]
+    fn session_with_no_api_calls_is_skipped() {
+        let conn = seed_db();
+        // 'nocalls' has api_call_count=0; only 'active'/'old' qualify for /proj.
+        let usage = query_usage(&conn, "/proj").unwrap();
+        assert_ne!(usage.session_id.as_deref(), Some("nocalls"));
     }
 
     #[test]

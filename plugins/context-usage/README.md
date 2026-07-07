@@ -29,7 +29,7 @@ from server state instead of reading cache files.
 | Codex | yes (official) | no (none in local state) | rollout JSONL `token_count` / `model_context_window` | pull (`poll`) |
 | OpenCode | yes (estimated) | no | SQLite `session` + last message `tokens.input`, sized by a model registry | pull (`poll`) |
 | Antigravity | harvester ready, unverified | when present | statusLine JSON (defensive parse) | push (statusLine hook) |
-| Hermes | estimated (prefer-herdr mode) | no | SQLite `sessions.input_tokens`, sized by registry | pull (`poll`); default prefer-native |
+| Hermes | estimated (prefer-herdr mode) | no | SQLite: avg total input per API call, sized by registry | pull (`poll`); default prefer-native |
 
 "Context %" and "reset timer" are independent: a session can report one without
 the other. Reset times are only ever shown when the provider supplies a
@@ -40,9 +40,11 @@ registry.
 **Hermes** renders its own context bar, so Herdr defers to it by default
 (`[ui.context_usage.native] hermes = "prefer-native"`). Set `hermes =
 "prefer-herdr"` to have Herdr draw the segment too; `poll` then reads Hermes's
-own `~/.hermes/state.db` (session by cwd, `input_tokens` sized by the model
-registry, `estimated`). The same per-agent key exists for every agent
-(`prefer-herdr` / `prefer-native` / `both` / `hidden`).
+own `~/.hermes/state.db`. Its token columns are session totals and per-message
+counts are unpopulated, so current context is estimated as the average total
+input per API call (`(input_tokens + cache_read_tokens) / api_call_count`),
+sized by the model registry and reported `estimated`. The same per-agent key
+exists for every agent (`prefer-herdr` / `prefer-native` / `both` / `hidden`).
 
 **Push vs. pull.** Claude Code (and Antigravity) render a statusLine on every
 turn, so their collector is invoked there and reports immediately. Codex,
