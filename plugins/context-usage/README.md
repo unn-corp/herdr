@@ -2,7 +2,7 @@
 
 Collects AI agent context-window and reset usage for [Herdr](https://herdr.dev)
 panes, and reports it so Herdr's top monitor strip can show per-pane usage
-(`ctx p1 claude 63% ▰▰▰▰▰▰▱▱ 2h14m`).
+(`ctx claude 63% ▰▰▰▰▰▰▱▱ 2h14m`).
 
 This is a standalone crate that lives in the Herdr fork but is **not** part of
 the `herdr` binary build. It is built and tested on its own:
@@ -44,12 +44,22 @@ own `~/.hermes/state.db` (session by cwd, `input_tokens` sized by the model
 registry, `estimated`). The same per-agent key exists for every agent
 (`prefer-herdr` / `prefer-native` / `both` / `hidden`).
 
-**Push vs. pull.** Claude Code renders a statusLine on every turn, so its
-collector is invoked there and reports immediately. Codex has no such hook, so
-`poll` asks Herdr for the pane list, maps each Codex pane to its session by
-working directory, reads the latest `token_count`, and reports. Run
-`herdr-context-usage poll --watch` as a background daemon to keep Codex panes
-current.
+**Push vs. pull.** Claude Code (and Antigravity) render a statusLine on every
+turn, so their collector is invoked there and reports immediately. Codex,
+OpenCode, and Hermes have no such hook, so `poll` asks Herdr for the pane list,
+maps each pane to its session by working directory, reads that session's local
+telemetry, and reports. Run `herdr-context-usage poll --watch` as a background
+daemon to keep those panes current.
+
+## Configuration
+
+Rendering is controlled by Herdr's `[ui.context_usage]` config (see Herdr's
+Configuration docs). Keys: `enabled` (default true), `bar_width` (cells,
+default 8), `show_reset` (default true), `show_model` (default false). The
+segment only appears when Herdr's `system_monitor` strip is enabled.
+`[ui.context_usage.native]` sets a per-agent preference
+(`prefer-herdr` / `prefer-native` / `both` / `hidden`); Hermes defaults to
+`prefer-native` so Herdr does not duplicate its own context bar.
 
 ## Install
 

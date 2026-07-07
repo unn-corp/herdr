@@ -103,7 +103,7 @@ Raw socket method names use dot notation:
 | Workspace | `workspace.create`, `workspace.list`, `workspace.get`, `workspace.focus`, `workspace.rename`, `workspace.move`, `workspace.close` |
 | Worktree | `worktree.list`, `worktree.create`, `worktree.open`, `worktree.remove` |
 | Tab | `tab.create`, `tab.list`, `tab.get`, `tab.focus`, `tab.rename`, `tab.move`, `tab.close` |
-| Pane | `pane.split`, `pane.swap`, `pane.move`, `pane.zoom`, `pane.layout`, `pane.process_info`, `pane.neighbor`, `pane.edges`, `pane.focus_direction`, `pane.resize`, `pane.list`, `pane.current`, `pane.get`, `pane.rename`, `pane.send_text`, `pane.send_keys`, `pane.send_input`, `pane.read`, `pane.report_agent`, `pane.report_agent_session`, `pane.report_metadata`, `pane.clear_agent_authority`, `pane.release_agent`, `pane.close`, `pane.wait_for_output` |
+| Pane | `pane.split`, `pane.swap`, `pane.move`, `pane.zoom`, `pane.layout`, `pane.process_info`, `pane.neighbor`, `pane.edges`, `pane.focus_direction`, `pane.resize`, `pane.list`, `pane.current`, `pane.get`, `pane.rename`, `pane.send_text`, `pane.send_keys`, `pane.send_input`, `pane.read`, `pane.report_agent`, `pane.report_agent_session`, `pane.report_metadata`, `pane.report_usage`, `pane.clear_agent_authority`, `pane.release_agent`, `pane.close`, `pane.wait_for_output` |
 | Layout | `layout.export`, `layout.apply`, `layout.set_split_ratio` |
 | Agent | `agent.list`, `agent.get`, `agent.read`, `agent.explain`, `agent.send`, `agent.rename`, `agent.focus`, `agent.start` |
 | Events | `events.subscribe`, `events.wait` |
@@ -604,6 +604,32 @@ Presentation text is normalized before storage. Herdr trims surrounding whitespa
 Use `ttl_ms` for short-lived metadata. It must be between `1` and `86400000` milliseconds. Omit `ttl_ms` for metadata that should stay until replaced, cleared, or the pane closes. When the TTL expires, Herdr removes that source's metadata and emits a presentation change if the visible pane presentation changed.
 
 Use `seq` when a hook may send updates out of order. For the same `source`, reports with a sequence number less than or equal to the last accepted sequence are accepted by the API but ignored by the pane state.
+
+### pane.report_usage
+
+Use `pane.report_usage` to report a pane's AI agent context-window usage. Herdr stores it on the pane, surfaces it as the `usage` field of `PaneInfo`, and, when `[ui.context_usage]` is enabled, renders it in the monitor strip. This powers the bundled `context-usage` plugin.
+
+```json
+{
+  "id": "req_3",
+  "method": "pane.report_usage",
+  "params": {
+    "pane_id": "w1:p1",
+    "source": "herdr-context-usage:claude-statusline",
+    "agent": "claude",
+    "model": "claude-sonnet-4-20250514",
+    "used_pct": 63,
+    "context_window_tokens": 200000,
+    "used_tokens": 126000,
+    "reset_at_unix": 1783468800,
+    "window_kind": "five_hour",
+    "confidence": "official",
+    "ttl_ms": 1800000
+  }
+}
+```
+
+Usage reports are display-only. Every field except `pane_id` and `source` is optional; a reader treats a missing field as unknown, not zero. `used_pct` must be between `0` and `100`. `confidence` must be one of `official`, `estimated`, `heuristic`, or `unavailable`. Set `reset_at_unix` only from a machine-readable provider signal; it is never synthesized. Pass `clear: true` with the same `source` to remove a pane's usage. `source` follows the same rules as `pane.report_metadata` (80 characters or fewer, ASCII letters, digits, colon, dot, underscore, and hyphen), and `ttl_ms` and `seq` behave the same way; when the TTL expires the usage stops rendering.
 
 ## Event subscriptions
 

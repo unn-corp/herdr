@@ -320,6 +320,15 @@ system_monitor = false
 system_monitor_interval_ms = 2000
 transparent_background = false
 accent = "cyan"
+
+[ui.context_usage]
+enabled = true
+bar_width = 8
+show_reset = true
+show_model = false
+
+[ui.context_usage.native]
+hermes = "prefer-native"
 ```
 
 `sidebar_min_width` and `sidebar_max_width` control the expanded sidebar's resize bounds in columns. The defaults are 18 and 36.
@@ -349,6 +358,10 @@ Set `show_agent_labels_on_pane_borders = true` if you want detected agent labels
 Set `hide_tab_bar_when_single_tab = true` to hide the tab row when the active workspace has exactly one tab. New tabs can still be created with the configured keybinding. When a second tab appears, Herdr restores the tab row and resizes panes to make room for it.
 
 Set `system_monitor = true` to show a one-row CPU / RAM / GPU usage strip at the top of each space. CPU comes from `/proc/stat` and memory from `/proc/meminfo`; GPU utilization is read from `nvidia-smi` first, then an AMD `gpu_busy_percent` sysfs node, and the GPU segment is hidden when neither is available (VRAM used shows in parentheses after GPU utilization). `system_monitor_interval_ms` sets the refresh cadence (default 2000). The GPU read runs off the render loop so it never stalls the UI. The strip also shows the active space's git branch and its uncommitted-change count. System metrics are read on Linux; other platforms show CPU and RAM as unavailable.
+
+When the monitor strip is enabled, `[ui.context_usage]` adds a per-pane AI agent context-window segment to the strip, between the GPU metric and the git branch, for example `ctx claude 63% ▰▰▰▰▰▰▱▱ 2h14m`. It lists the active tab's agent panes that have reported usage. `enabled` (default true) turns the segment on or off, `bar_width` sets the bar length in cells (default 8), `show_reset` shows a reset countdown when the provider supplies one (default true), and `show_model` adds the model name (default false). A reset countdown is only shown from a machine-readable provider signal, never estimated.
+
+Usage is collected by the bundled `context-usage` plugin and reported over the socket API with [`pane.report_usage`](/docs/socket-api/). It supports Claude Code (statusLine), Codex, OpenCode, and Hermes; run `herdr-context-usage install` to wire Claude Code's statusLine and `herdr-context-usage poll --watch` for the pull-based collectors (Codex, OpenCode, Hermes), which map each pane to its session by working directory. `[ui.context_usage.native]` sets a per-agent preference for whether Herdr draws its own segment or defers to the agent's own context display: `prefer-herdr` (draw it), `prefer-native` (defer to the agent), `both`, or `hidden`. Hermes renders its own context bar, so it defaults to `prefer-native`; every other agent defaults to `prefer-herdr`.
 
 Set `transparent_background = true` to make all Herdr chrome (sidebar, bars, the monitor strip, and panels) use the terminal's default background instead of the theme's solid fills, so a transparent terminal window shows through. Foreground and accent colors are unchanged. Enable your terminal emulator's background opacity/transparency for the effect to be visible.
 
