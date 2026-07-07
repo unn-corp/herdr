@@ -790,6 +790,7 @@ pub fn agent_state_label(state: AgentState) -> &'static str {
     match state {
         AgentState::Idle => "idle",
         AgentState::Working => "working",
+        AgentState::Waiting => "waiting",
         AgentState::Blocked => "blocked",
         AgentState::Unknown => "unknown",
     }

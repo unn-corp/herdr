@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- Added a `waiting` agent state (blue) for shells blocked on a long-running command such as a pull, download, install, build, or `sleep`. It ranks just below `working` in attention priority and is reported over the socket API, so `herdr agent list` and `herdr agent wait --status waiting` can observe it. Agent panes keep reporting `working` while the agent itself runs a subprocess, since the agent owns the terminal.
 - Added `ui.system_monitor` to show a one-row CPU / RAM / GPU usage strip at the top of each space, with `ui.system_monitor_interval_ms` controlling the refresh cadence. GPU utilization comes from `nvidia-smi` or an AMD `gpu_busy_percent` sysfs node (VRAM used shown in parentheses) and is hidden when neither is present; the GPU read runs off the render loop. The strip also shows the active space's git branch and uncommitted-change count.
 - Added `ui.transparent_background` to render all Herdr chrome with the terminal's default background, so a transparent terminal window shows through.
 - The sidebar now shows each space's uncommitted git change count next to its branch, and each agent's count next to its status.
@@ -16,6 +17,7 @@
 - Added `ui.hide_tab_bar_when_single_tab` to hide the tab row when a workspace has one tab. (#448)
 
 ### Changed
+- Bumped the client/server protocol version to 17 for the `waiting` agent status added to the socket API.
 - Bumped the client/server protocol version to 16 for foreground-client prefix input-source switching.
 - Bumped the client/server protocol version to 15 for socket API placement mutation event and response compatibility.
 

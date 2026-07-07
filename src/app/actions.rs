@@ -780,6 +780,7 @@ fn state_label_text(state: AgentState, seen: bool) -> &'static str {
     match (state, seen) {
         (AgentState::Blocked, _) => "blocked",
         (AgentState::Working, _) => "working",
+        (AgentState::Waiting, _) => "waiting",
         (AgentState::Idle, false) => "done",
         (AgentState::Idle, true) => "idle",
         (AgentState::Unknown, _) => "unknown",
@@ -809,8 +810,9 @@ fn tab_aggregate_state(
 
 fn state_priority(state: AgentState, seen: bool) -> u8 {
     match (state, seen) {
-        (AgentState::Blocked, _) => 5,
-        (AgentState::Working, _) => 4,
+        (AgentState::Blocked, _) => 6,
+        (AgentState::Working, _) => 5,
+        (AgentState::Waiting, _) => 4,
         (AgentState::Idle, false) => 3,
         (AgentState::Idle, true) => 2,
         (AgentState::Unknown, _) => 1,

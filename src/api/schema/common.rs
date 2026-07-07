@@ -113,6 +113,7 @@ pub enum ClientWindowTitleReason {
 pub enum PaneAgentState {
     Idle,
     Working,
+    Waiting,
     Blocked,
     Unknown,
 }
@@ -122,6 +123,7 @@ pub enum PaneAgentState {
 pub enum AgentStatus {
     Idle,
     Working,
+    Waiting,
     Blocked,
     Done,
     Unknown,

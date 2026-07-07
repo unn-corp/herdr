@@ -158,6 +158,7 @@ pub(super) fn agent_panel_status_key(state: AgentState, seen: bool) -> &'static 
         (AgentState::Idle, false) => "done",
         (AgentState::Idle, true) => "idle",
         (AgentState::Working, _) => "working",
+        (AgentState::Waiting, _) => "waiting",
         (AgentState::Blocked, _) => "blocked",
         (AgentState::Unknown, _) => "unknown",
     }
@@ -219,9 +220,10 @@ fn workspace_row_height(ws: &crate::workspace::Workspace) -> u16 {
 
 fn workspace_attention_priority(state: AgentState, seen: bool) -> u8 {
     match (state, seen) {
-        (AgentState::Blocked, _) => 4,
-        (AgentState::Idle, false) => 3,
-        (AgentState::Working, _) => 2,
+        (AgentState::Blocked, _) => 5,
+        (AgentState::Idle, false) => 4,
+        (AgentState::Working, _) => 3,
+        (AgentState::Waiting, _) => 2,
         (AgentState::Idle, true) => 1,
         (AgentState::Unknown, _) => 0,
     }

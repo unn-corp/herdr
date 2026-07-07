@@ -13,6 +13,9 @@ pub enum AgentState {
     Idle,
     /// Agent is actively working/processing.
     Working,
+    /// A shell is blocked on a long-running command (pull, download, install,
+    /// build, sleep). Ranks just below Working in attention priority.
+    Waiting,
     /// Agent needs human input and is blocked on a response.
     Blocked,
     /// Plain shell or unrecognized program.
@@ -303,6 +306,56 @@ fn normalized_process_name(process: &crate::platform::ForegroundProcess) -> Stri
     effective.to_string()
 }
 
+/// True when the foreground job is a shell blocked on a long-running command
+/// (a download, fetch, install, build, or sleep) rather than an interactive
+/// program. Used to surface a "waiting" state for shell panes.
+pub fn foreground_is_wait_command(job: &crate::platform::ForegroundJob) -> bool {
+    job.processes.iter().any(process_is_wait_command)
+}
+
+fn process_is_wait_command(process: &crate::platform::ForegroundProcess) -> bool {
+    let raw = process.argv0.as_deref().unwrap_or(&process.name);
+    let name = raw.rsplit(['/', '\\']).next().unwrap_or(raw).to_lowercase();
+
+    // Commands that always mean "blocked until this finishes".
+    const ALWAYS_WAIT: &[&str] = &[
+        "sleep", "curl", "wget", "aria2c", "rsync", "scp", "make", "ninja", "cmake", "gradle",
+        "mvn", "bundle", "poetry", "uv", "wait",
+    ];
+    if ALWAYS_WAIT.contains(&name.as_str()) {
+        return true;
+    }
+
+    // Commands whose waiting nature depends on the subcommand.
+    let argv = process.argv.as_deref().unwrap_or(&[]);
+    let sub = argv
+        .iter()
+        .skip(1)
+        .find(|arg| !arg.starts_with('-'))
+        .map(|arg| arg.to_lowercase());
+    let sub = sub.as_deref();
+    match name.as_str() {
+        "git" => matches!(sub, Some("fetch" | "pull" | "clone" | "push" | "submodule")),
+        "npm" | "pnpm" | "yarn" => {
+            matches!(
+                sub,
+                Some("install" | "i" | "ci" | "add" | "update" | "upgrade")
+            )
+        }
+        "pip" | "pip3" => matches!(sub, Some("install" | "download" | "wheel")),
+        "cargo" => matches!(
+            sub,
+            Some("build" | "install" | "fetch" | "update" | "test" | "check")
+        ),
+        "go" => matches!(sub, Some("get" | "build" | "install" | "mod" | "test")),
+        "apt" | "apt-get" | "dnf" | "yum" | "pacman" | "zypper" | "brew" => {
+            matches!(sub, Some("install" | "update" | "upgrade" | "download"))
+        }
+        "docker" | "podman" => matches!(sub, Some("pull" | "build" | "push")),
+        _ => false,
+    }
+}
+
 fn wrapped_agent_name_from_runtime_argv(runtime: &str, argv: Option<&[String]>) -> Option<String> {
     let argv = argv?;
     let runtime = normalized_agent_lookup_name(path_basename(runtime));
@@ -584,6 +637,49 @@ mod tests {
             argv0: None,
             argv: Some(argv.iter().map(|arg| (*arg).to_string()).collect()),
             cmdline: Some(argv.join(" ")),
+        }
+    }
+
+    fn wait_job(procs: Vec<crate::platform::ForegroundProcess>) -> crate::platform::ForegroundJob {
+        crate::platform::ForegroundJob {
+            process_group_id: procs.first().map(|p| p.pid).unwrap_or(0),
+            processes: procs,
+        }
+    }
+
+    #[test]
+    fn foreground_wait_command_flags_long_running_commands() {
+        for (name, argv) in [
+            ("sleep", ["sleep", "60"]),
+            ("git", ["git", "pull"]),
+            ("git", ["git", "clone"]),
+            ("npm", ["npm", "install"]),
+            ("cargo", ["cargo", "build"]),
+            ("curl", ["curl", "url"]),
+            ("make", ["make", "all"]),
+            ("docker", ["docker", "pull"]),
+        ] {
+            assert!(
+                foreground_is_wait_command(&wait_job(vec![foreground_process(10, name, &argv)])),
+                "{name} {argv:?} should be a wait command"
+            );
+        }
+    }
+
+    #[test]
+    fn foreground_wait_command_ignores_interactive_and_quick_commands() {
+        for (name, argv) in [
+            ("git", ["git", "status"]),
+            ("npm", ["npm", "run"]),
+            ("ls", ["ls", "-la"]),
+            ("vim", ["vim", "file"]),
+            ("cargo", ["cargo", "clean"]),
+            ("bash", ["bash", "-l"]),
+        ] {
+            assert!(
+                !foreground_is_wait_command(&wait_job(vec![foreground_process(10, name, &argv)])),
+                "{name} {argv:?} should not be a wait command"
+            );
         }
     }
 

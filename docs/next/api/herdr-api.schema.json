@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "protocol": 16,
+  "protocol": 17,
   "schema_version": 1,
   "schemas": {
     "error_response": {
@@ -73,6 +73,7 @@
           "enum": [
             "idle",
             "working",
+            "waiting",
             "blocked",
             "done",
             "unknown"
@@ -1210,6 +1211,7 @@
           "enum": [
             "idle",
             "working",
+            "waiting",
             "blocked",
             "done",
             "unknown"
@@ -1908,6 +1910,7 @@
           "enum": [
             "idle",
             "working",
+            "waiting",
             "blocked",
             "unknown"
           ],
@@ -5012,6 +5015,7 @@
           "enum": [
             "idle",
             "working",
+            "waiting",
             "blocked",
             "done",
             "unknown"
@@ -5372,6 +5376,7 @@
           "enum": [
             "idle",
             "working",
+            "waiting",
             "blocked",
             "done",
             "unknown"
