@@ -21,24 +21,34 @@ and writes a small per-pane record to
 running, it also calls `herdr pane report-usage` so the top strip can render
 from server state instead of reading cache files.
 
-## Compatibility (Phase 1)
+## Compatibility
 
-| CLI | Context % | Reset timer | Source |
-| --- | --- | --- | --- |
-| Claude Code | yes (Pro/Max sessions) | yes when present | statusLine `rate_limits` |
-| Codex, Antigravity, OpenCode, Hermes | planned | planned | later phases |
+| CLI | Context % | Reset timer | Source | How |
+| --- | --- | --- | --- | --- |
+| Claude Code | yes (Pro/Max sessions) | yes when present | statusLine `rate_limits` | push (statusLine hook) |
+| Codex | yes | no (none in local state) | rollout JSONL `token_count` / `model_context_window` | pull (`poll`) |
+| Antigravity, OpenCode, Hermes | planned | planned | later phases | - |
 
 "Context %" and "reset timer" are independent: a session can report one without
 the other. Reset times are only ever shown when the provider supplies a
 machine-readable value; they are never synthesized.
 
+**Push vs. pull.** Claude Code renders a statusLine on every turn, so its
+collector is invoked there and reports immediately. Codex has no such hook, so
+`poll` asks Herdr for the pane list, maps each Codex pane to its session by
+working directory, reads the latest `token_count`, and reports. Run
+`herdr-context-usage poll --watch` as a background daemon to keep Codex panes
+current.
+
 ## Install
 
 ```bash
-herdr-context-usage install       # wires the Claude Code statusLine collector
-herdr-context-usage doctor        # diagnose the setup
-herdr-context-usage show --all    # print cached usage
-herdr-context-usage uninstall     # restore prior config
+herdr-context-usage install         # wires the Claude Code statusLine collector
+herdr-context-usage poll            # report pull-based agents (Codex) once
+herdr-context-usage poll --watch    # keep Codex panes current (run as a daemon)
+herdr-context-usage doctor          # diagnose the setup
+herdr-context-usage show --all      # print cached usage
+herdr-context-usage uninstall       # restore prior config
 ```
 
 Install preserves any existing Claude `statusLine.command` by recording it and

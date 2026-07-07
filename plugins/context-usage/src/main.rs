@@ -8,6 +8,8 @@ mod cache;
 mod collectors;
 mod context;
 mod install;
+mod poll;
+mod report;
 
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -70,6 +72,17 @@ enum Command {
         #[arg(long, default_value_t = 2000)]
         interval_ms: u64,
     },
+    /// Poll pull-based agents (Codex, ...) across all Herdr panes and report
+    /// usage. Maps each pane to its session by working directory via
+    /// `herdr pane list`.
+    Poll {
+        /// Keep polling on an interval instead of running once.
+        #[arg(long)]
+        watch: bool,
+        /// Poll interval in milliseconds when `--watch` is set.
+        #[arg(long, default_value_t = 5000)]
+        interval_ms: u64,
+    },
     /// Diagnose the collector setup.
     Doctor,
 }
@@ -84,6 +97,7 @@ fn main() -> std::process::ExitCode {
         Command::Uninstall { settings } => run_uninstall(&cache_root, settings.as_deref()),
         Command::Show { pane, all, json } => run_show(&cache_root, pane, all, json),
         Command::Watch { interval_ms } => run_watch(&cache_root, interval_ms),
+        Command::Poll { watch, interval_ms } => poll::run(&cache_root, watch, interval_ms),
         Command::Doctor => run_doctor(&cache_root),
     };
 
@@ -106,10 +120,34 @@ fn run_collect(
             let _ = collectors::claude::run_statusline(cache_root);
             Ok(std::process::ExitCode::SUCCESS)
         }
+        "codex" => {
+            collect_codex(cache_root);
+            Ok(std::process::ExitCode::SUCCESS)
+        }
         other => {
-            eprintln!("herdr-context-usage: unknown collect agent '{other}' (supported: claude)");
+            eprintln!(
+                "herdr-context-usage: unknown collect agent '{other}' (supported: claude, codex)"
+            );
             Ok(std::process::ExitCode::FAILURE)
         }
+    }
+}
+
+/// Collect Codex usage for the current pane: find this pane's Codex session by
+/// its working directory, parse it, and report. Used as a Codex hook or manual
+/// invocation from inside a pane.
+fn collect_codex(cache_root: &std::path::Path) {
+    let ctx = PaneContext::from_env();
+    let Some(pane_id) = ctx.pane_id.clone() else {
+        eprintln!("herdr-context-usage: codex collect needs $HERDR_PANE_ID");
+        return;
+    };
+    let cwd = std::env::current_dir()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_default();
+    if let Some(usage) = collectors::codex::usage_for_cwd(&cwd) {
+        let record = collectors::codex::record(&usage, &pane_id, &ctx, now_unix());
+        report::persist_and_report(cache_root, &record);
     }
 }
 

@@ -151,10 +151,7 @@ pub fn run_statusline(cache_root: &Path) -> String {
             let should_write = record.confidence != Confidence::Unavailable
                 || !prior_was_useful(cache_root, &record.pane_id, now_unix);
             if should_write {
-                if let Err(err) = cache::write_record(cache_root, &record) {
-                    eprintln!("herdr-context-usage: cache write failed: {err}");
-                }
-                report_to_herdr(&record);
+                crate::report::persist_and_report(cache_root, &record);
             }
         }
     }
@@ -169,80 +166,6 @@ fn prior_was_useful(cache_root: &Path, pane_id: &str, now_unix: i64) -> bool {
     match cache::read_record(cache_root, pane_id) {
         Ok(Some(prior)) => prior.confidence != Confidence::Unavailable && !prior.is_stale(now_unix),
         _ => false,
-    }
-}
-
-/// Report the record to Herdr's runtime via the `herdr pane report-usage` CLI,
-/// so the top strip can render from server state. Best-effort: a missing or
-/// older Herdr (no `report-usage` subcommand) simply fails silently and the
-/// cache-file path is used instead. Discrete flags mirror `report-metadata`
-/// rather than coupling to the plugin's cache JSON shape.
-fn report_to_herdr(record: &UsageRecord) {
-    let args = herdr_report_args(record);
-    let bin = crate::context::herdr_bin();
-    let result = Command::new(bin)
-        .args(&args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
-    if let Err(err) = result {
-        eprintln!("herdr-context-usage: report-usage failed: {err}");
-    }
-}
-
-/// Build the `herdr pane report-usage` argument vector from a record. Only
-/// includes flags for fields that are actually known.
-fn herdr_report_args(record: &UsageRecord) -> Vec<String> {
-    let mut args: Vec<String> = vec![
-        "pane".into(),
-        "report-usage".into(),
-        // Pane id is positional, matching `herdr pane report-metadata`.
-        record.pane_id.clone(),
-        "--source".into(),
-        record.source.clone(),
-        "--confidence".into(),
-        confidence_str(record.confidence).into(),
-        "--ttl-ms".into(),
-        record.stale_after_seconds.saturating_mul(1000).to_string(),
-    ];
-    let mut push = |flag: &str, value: String| {
-        args.push(flag.to_string());
-        args.push(value);
-    };
-    if let Some(agent) = &record.agent {
-        push("--agent", agent.clone());
-    }
-    if let Some(model) = &record.model {
-        push("--model", model.clone());
-    }
-    if let Some(pct) = record.used_pct {
-        push("--used-pct", pct.to_string());
-    }
-    if let Some(t) = record.used_tokens {
-        push("--used-tokens", t.to_string());
-    }
-    if let Some(t) = record.context_window_tokens {
-        push("--context-window-tokens", t.to_string());
-    }
-    if let Some(t) = record.remaining_tokens {
-        push("--remaining-tokens", t.to_string());
-    }
-    if let Some(reset) = record.reset_at_unix {
-        push("--reset-at-unix", reset.to_string());
-    }
-    if let Some(kind) = &record.window_kind {
-        push("--window-kind", kind.clone());
-    }
-    args
-}
-
-fn confidence_str(confidence: Confidence) -> &'static str {
-    match confidence {
-        Confidence::Official => "official",
-        Confidence::Estimated => "estimated",
-        Confidence::Heuristic => "heuristic",
-        Confidence::Unavailable => "unavailable",
     }
 }
 

@@ -34,6 +34,12 @@ title = "Context Usage: Show Focused Pane"
 contexts = ["pane"]
 command = ["target/release/herdr-context-usage", "show"]
 
+[[actions]]
+id = "poll"
+title = "Context Usage: Poll Pull-Based Agents"
+contexts = ["global"]
+command = ["target/release/herdr-context-usage", "poll"]
+
 [[panes]]
 id = "usage"
 title = "Context Usage"
