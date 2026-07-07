@@ -306,11 +306,15 @@ fn normalized_process_name(process: &crate::platform::ForegroundProcess) -> Stri
     effective.to_string()
 }
 
-/// True when the foreground job is a shell blocked on a long-running command
-/// (a download, fetch, install, build, or sleep) rather than an interactive
-/// program. Used to surface a "waiting" state for shell panes.
-pub fn foreground_is_wait_command(job: &crate::platform::ForegroundJob) -> bool {
-    job.processes.iter().any(process_is_wait_command)
+/// True when the process subtree rooted at `root_pid` contains a long-running
+/// command a shell or agent is blocked on (pull, download, install, build,
+/// sleep). Unlike the tty foreground group, this sees commands spawned by a
+/// full-screen agent that keeps the terminal, so an agent waiting on a deploy
+/// or build surfaces as `Waiting` too.
+pub fn has_wait_command_descendant(root_pid: u32) -> bool {
+    crate::platform::descendant_processes(root_pid)
+        .iter()
+        .any(process_is_wait_command)
 }
 
 fn process_is_wait_command(process: &crate::platform::ForegroundProcess) -> bool {
@@ -640,15 +644,8 @@ mod tests {
         }
     }
 
-    fn wait_job(procs: Vec<crate::platform::ForegroundProcess>) -> crate::platform::ForegroundJob {
-        crate::platform::ForegroundJob {
-            process_group_id: procs.first().map(|p| p.pid).unwrap_or(0),
-            processes: procs,
-        }
-    }
-
     #[test]
-    fn foreground_wait_command_flags_long_running_commands() {
+    fn wait_command_flags_long_running_commands() {
         for (name, argv) in [
             ("sleep", ["sleep", "60"]),
             ("git", ["git", "pull"]),
@@ -660,14 +657,14 @@ mod tests {
             ("docker", ["docker", "pull"]),
         ] {
             assert!(
-                foreground_is_wait_command(&wait_job(vec![foreground_process(10, name, &argv)])),
+                process_is_wait_command(&foreground_process(10, name, &argv)),
                 "{name} {argv:?} should be a wait command"
             );
         }
     }
 
     #[test]
-    fn foreground_wait_command_ignores_interactive_and_quick_commands() {
+    fn wait_command_ignores_interactive_and_quick_commands() {
         for (name, argv) in [
             ("git", ["git", "status"]),
             ("npm", ["npm", "run"]),
@@ -677,7 +674,7 @@ mod tests {
             ("bash", ["bash", "-l"]),
         ] {
             assert!(
-                !foreground_is_wait_command(&wait_job(vec![foreground_process(10, name, &argv)])),
+                !process_is_wait_command(&foreground_process(10, name, &argv)),
                 "{name} {argv:?} should not be a wait command"
             );
         }

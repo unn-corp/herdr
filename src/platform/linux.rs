@@ -108,6 +108,64 @@ pub fn foreground_job(child_pid: u32) -> Option<ForegroundJob> {
     })
 }
 
+/// Walk the process subtree rooted at `root_pid` (excluding the root) and return
+/// each descendant as a `ForegroundProcess`. Used to detect when a shell or an
+/// agent is blocked on a long-running command it spawned, which the tty
+/// foreground group cannot see for full-screen agents that keep the terminal.
+/// Bounded so a deep or wide tree cannot stall the detector.
+pub fn descendant_processes(root_pid: u32) -> Vec<ForegroundProcess> {
+    const MAX_PROCESSES: usize = 256;
+    let mut out = Vec::new();
+    let mut queue = std::collections::VecDeque::new();
+    let mut seen = std::collections::HashSet::new();
+    queue.push_back(root_pid);
+    seen.insert(root_pid);
+    while let Some(pid) = queue.pop_front() {
+        for child in child_pids(pid) {
+            if !seen.insert(child) {
+                continue;
+            }
+            if let Some((_, comm)) = process_pgrp_and_comm(child) {
+                let argv = process_argv(child);
+                out.push(ForegroundProcess {
+                    pid: child,
+                    name: comm,
+                    argv0: None,
+                    cmdline: argv.as_ref().map(|parts| parts.join(" ")),
+                    argv,
+                });
+            }
+            queue.push_back(child);
+            if out.len() >= MAX_PROCESSES {
+                return out;
+            }
+        }
+    }
+    out
+}
+
+/// Direct child PIDs of `pid`, unioned across all of its threads
+/// (`/proc/<pid>/task/<tid>/children`, requires CONFIG_PROC_CHILDREN).
+fn child_pids(pid: u32) -> Vec<u32> {
+    let mut kids = Vec::new();
+    let Ok(entries) = std::fs::read_dir(format!("/proc/{pid}/task")) else {
+        return kids;
+    };
+    for entry in entries.flatten() {
+        let Some(tid) = entry.file_name().to_str().map(str::to_string) else {
+            continue;
+        };
+        if let Ok(contents) = std::fs::read_to_string(format!("/proc/{pid}/task/{tid}/children")) {
+            for token in contents.split_whitespace() {
+                if let Ok(child) = token.parse::<u32>() {
+                    kids.push(child);
+                }
+            }
+        }
+    }
+    kids
+}
+
 fn foreground_process_group_members(process_group_id: u32) -> Option<Vec<ProcGroupMember>> {
     let mut cache = FOREGROUND_MEMBERS_CACHE
         .lock()

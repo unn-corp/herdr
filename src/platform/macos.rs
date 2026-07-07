@@ -312,6 +312,11 @@ fn target_nofile_soft_limit(
 }
 
 /// Collect the foreground terminal job for a given child PID.
+/// Not yet implemented on macOS; waiting detection stays inert here.
+pub fn descendant_processes(_root_pid: u32) -> Vec<ForegroundProcess> {
+    Vec::new()
+}
+
 pub fn foreground_job(child_pid: u32) -> Option<ForegroundJob> {
     if child_pid == 0 {
         return None;

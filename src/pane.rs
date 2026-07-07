@@ -221,6 +221,9 @@ async fn apply_agent_detection_publish_update(
 
 const AGENT_MISS_CONFIRMATION_ATTEMPTS: u8 = 6;
 const PROCESS_RECHECK_IDENTIFIED: std::time::Duration = std::time::Duration::from_secs(5);
+/// How often to scan a pane's process subtree for a long-running command that
+/// puts the pane in the `Waiting` state. Cheap per-pane `/proc` walk, throttled.
+const WAIT_DESCENDANT_SCAN_INTERVAL: std::time::Duration = std::time::Duration::from_millis(800);
 const PROCESS_RECHECK_MISSING_FOREGROUND_GROUP: std::time::Duration =
     std::time::Duration::from_secs(30);
 const PROCESS_ACQUISITION_WINDOW: std::time::Duration = std::time::Duration::from_secs(8);
@@ -406,10 +409,6 @@ struct ProcessProbeResult {
     foreground_is_pane_shell: bool,
     agent: Option<Agent>,
     process_name: Option<String>,
-    /// True when the foreground is a long-running command a shell is blocked on
-    /// (pull, download, install, build, sleep). Only meaningful when `agent`
-    /// is `None`; agent panes own their state via screen detection.
-    is_wait_command: bool,
 }
 
 fn agent_hint_for_foreground_job_members(
@@ -455,7 +454,6 @@ fn process_probe_result(
         foreground_is_pane_shell: job.processes.iter().any(|process| process.pid == pid),
         agent: Some(agent),
         process_name: Some(process_name),
-        is_wait_command: false,
     }
 }
 
@@ -512,14 +510,11 @@ fn probe_foreground_process_from_jobs(
         }
 
         let identified = crate::detect::identify_agent_in_job(job);
-        let is_wait_command =
-            identified.is_none() && crate::detect::foreground_is_wait_command(job);
         return ProcessProbeResult {
             process_group_id: Some(job.process_group_id),
             foreground_is_pane_shell: job.processes.iter().any(|process| process.pid == pid),
             agent: identified.as_ref().map(|(agent, _)| *agent),
             process_name: identified.map(|(_, process_name)| process_name),
-            is_wait_command,
         };
     }
 
@@ -528,7 +523,6 @@ fn probe_foreground_process_from_jobs(
         foreground_is_pane_shell: false,
         agent: None,
         process_name: None,
-        is_wait_command: false,
     }
 }
 
@@ -569,7 +563,8 @@ fn spawn_basic_detection_task(
         let mut last_visible_signal_refresh = None;
         let mut last_process_check = std::time::Instant::now();
         let mut last_foreground_pgid = None;
-        let mut last_foreground_wait_command = false;
+        let mut last_wait_descendant = false;
+        let mut last_wait_scan_at: Option<std::time::Instant> = None;
         let mut has_process_probe = false;
         let mut acquisition_started_at = None;
         let mut last_content_change_at = None;
@@ -598,7 +593,8 @@ fn spawn_basic_detection_task(
                     last_visible_signal_refresh = None;
                     last_process_check = std::time::Instant::now();
                     last_foreground_pgid = None;
-                    last_foreground_wait_command = false;
+                    last_wait_descendant = false;
+                    last_wait_scan_at = None;
                     has_process_probe = false;
                     acquisition_started_at = None;
                     last_content_change_at = None;
@@ -656,7 +652,6 @@ fn spawn_basic_detection_task(
                 let probe = probe_foreground_process(pid, foreground_pgid);
                 let process_group_id = probe.process_group_id;
                 let foreground_is_pane_shell = probe.foreground_is_pane_shell;
-                last_foreground_wait_command = probe.is_wait_command;
                 let mut new_agent = probe.agent;
                 if let Some(suppressed_agent) = suppressed_agent {
                     if new_agent == Some(suppressed_agent) {
@@ -733,34 +728,54 @@ fn spawn_basic_detection_task(
                 }
             }
 
-            // Plain-shell "waiting" state: surface a distinct state when a shell
-            // (no agent) is blocked on a long-running command such as a pull,
-            // download, install, build, or sleep. Agent panes own their state
-            // through screen detection below, so this only runs with no agent.
-            if agent.is_none() && !lifecycle_authority_active {
-                let desired = if last_foreground_wait_command {
-                    AgentState::Waiting
-                } else if state == AgentState::Waiting {
-                    AgentState::Unknown
-                } else {
-                    state
-                };
-                if desired != state {
-                    state = desired;
+            // "Waiting" state: a shell or agent is blocked on a long-running
+            // command it spawned (deploy, build, pull, install, sleep). The tty
+            // foreground group can't see this for full-screen agents that keep
+            // the terminal, so scan the pane's process subtree instead. When a
+            // wait command is running we hold Waiting and skip screen detection;
+            // once it clears, agents resume normal detection and shells revert
+            // to Unknown. Waiting ranks below working in attention priority.
+            if !lifecycle_authority_active && pid > 0 {
+                if last_wait_scan_at.is_none_or(|scanned| {
+                    now.duration_since(scanned) >= WAIT_DESCENDANT_SCAN_INTERVAL
+                }) {
+                    last_wait_scan_at = Some(now);
+                    last_wait_descendant = crate::detect::has_wait_command_descendant(pid);
+                }
+                if last_wait_descendant {
+                    if state != AgentState::Waiting {
+                        state = AgentState::Waiting;
+                        publish_state_changed_event(
+                            state_events.clone(),
+                            pane_id,
+                            agent,
+                            AgentState::Waiting,
+                            false,
+                            false,
+                            false,
+                            now,
+                        )
+                        .await;
+                    }
+                    pending_idle.clear();
+                    continue;
+                }
+                if agent.is_none() && state == AgentState::Waiting {
+                    state = AgentState::Unknown;
                     publish_state_changed_event(
                         state_events.clone(),
                         pane_id,
                         None,
-                        desired,
+                        AgentState::Unknown,
                         false,
                         false,
                         false,
                         now,
                     )
                     .await;
+                    pending_idle.clear();
+                    continue;
                 }
-                pending_idle.clear();
-                continue;
             }
 
             let process_exited = pending_foreground_shell_clear

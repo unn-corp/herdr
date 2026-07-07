@@ -3,7 +3,7 @@
 ## Unreleased
 
 ### Added
-- Added a `waiting` agent state (blue) for shells blocked on a long-running command such as a pull, download, install, build, or `sleep`. It ranks just below `working` in attention priority and is reported over the socket API, so `herdr agent list` and `herdr agent wait --status waiting` can observe it. Agent panes keep reporting `working` while the agent itself runs a subprocess, since the agent owns the terminal.
+- Added a `waiting` agent state (blue) for a shell or agent blocked on a long-running command it spawned, such as a pull, download, install, build, or `sleep`. Detection scans the pane's process subtree, so it works for full-screen agents that keep the terminal (an agent waiting on a deploy shows `waiting`), not just plain shells. It ranks just below `working` in attention priority and is reported over the socket API, so `herdr agent list` and `herdr agent wait --status waiting` can observe it.
 - Added `ui.system_monitor` to show a one-row CPU / RAM / GPU usage strip at the top of each space, with `ui.system_monitor_interval_ms` controlling the refresh cadence. GPU utilization comes from `nvidia-smi` or an AMD `gpu_busy_percent` sysfs node (VRAM used shown in parentheses) and is hidden when neither is present; the GPU read runs off the render loop. The strip also shows the active space's git branch and uncommitted-change count.
 - Added `ui.transparent_background` to render all Herdr chrome with the terminal's default background, so a transparent terminal window shows through.
 - The sidebar now shows each space's uncommitted git change count next to its branch, and each agent's count next to its status.

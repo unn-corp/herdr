@@ -130,6 +130,11 @@ pub fn foreground_job(child_pid: u32) -> Option<ForegroundJob> {
     select_pane_foreground_job(child_pid, &entries)
 }
 
+/// Not yet implemented on Windows; waiting detection stays inert here.
+pub fn descendant_processes(_root_pid: u32) -> Vec<ForegroundProcess> {
+    Vec::new()
+}
+
 pub fn foreground_group_leader_job(process_group_id: u32) -> Option<ForegroundJob> {
     let entries = snapshot_processes();
     let entry = entries.iter().find(|entry| entry.pid == process_group_id)?;
