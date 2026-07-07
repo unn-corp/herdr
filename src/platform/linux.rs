@@ -108,6 +108,64 @@ pub fn foreground_job(child_pid: u32) -> Option<ForegroundJob> {
     })
 }
 
+/// Walk the process subtree rooted at `root_pid` (excluding the root) and return
+/// each descendant as a `ForegroundProcess`. Used to detect when a shell or an
+/// agent is blocked on a long-running command it spawned, which the tty
+/// foreground group cannot see for full-screen agents that keep the terminal.
+/// Bounded so a deep or wide tree cannot stall the detector.
+pub fn descendant_processes(root_pid: u32) -> Vec<ForegroundProcess> {
+    const MAX_PROCESSES: usize = 256;
+    let mut out = Vec::new();
+    let mut queue = std::collections::VecDeque::new();
+    let mut seen = std::collections::HashSet::new();
+    queue.push_back(root_pid);
+    seen.insert(root_pid);
+    while let Some(pid) = queue.pop_front() {
+        for child in child_pids(pid) {
+            if !seen.insert(child) {
+                continue;
+            }
+            if let Some((_, comm)) = process_pgrp_and_comm(child) {
+                let argv = process_argv(child);
+                out.push(ForegroundProcess {
+                    pid: child,
+                    name: comm,
+                    argv0: None,
+                    cmdline: argv.as_ref().map(|parts| parts.join(" ")),
+                    argv,
+                });
+            }
+            queue.push_back(child);
+            if out.len() >= MAX_PROCESSES {
+                return out;
+            }
+        }
+    }
+    out
+}
+
+/// Direct child PIDs of `pid`, unioned across all of its threads
+/// (`/proc/<pid>/task/<tid>/children`, requires CONFIG_PROC_CHILDREN).
+fn child_pids(pid: u32) -> Vec<u32> {
+    let mut kids = Vec::new();
+    let Ok(entries) = std::fs::read_dir(format!("/proc/{pid}/task")) else {
+        return kids;
+    };
+    for entry in entries.flatten() {
+        let Some(tid) = entry.file_name().to_str().map(str::to_string) else {
+            continue;
+        };
+        if let Ok(contents) = std::fs::read_to_string(format!("/proc/{pid}/task/{tid}/children")) {
+            for token in contents.split_whitespace() {
+                if let Ok(child) = token.parse::<u32>() {
+                    kids.push(child);
+                }
+            }
+        }
+    }
+    kids
+}
+
 fn foreground_process_group_members(process_group_id: u32) -> Option<Vec<ProcGroupMember>> {
     let mut cache = FOREGROUND_MEMBERS_CACHE
         .lock()
@@ -658,6 +716,86 @@ fn process_session_id(pid: u32) -> Option<i32> {
     let rest = stat.get(stat.rfind(')')? + 2..)?;
     let fields: Vec<&str> = rest.split_whitespace().collect();
     fields.get(3)?.parse().ok()
+}
+
+// --- System monitor metrics ------------------------------------------------
+
+/// Read a CPU busy/idle snapshot from `/proc/stat`.
+pub fn read_cpu_snapshot() -> Option<super::CpuSnapshot> {
+    let contents = std::fs::read_to_string("/proc/stat").ok()?;
+    super::parse_proc_stat_cpu(&contents)
+}
+
+/// Read used-memory percentage from `/proc/meminfo`.
+pub fn read_ram_pct() -> Option<u8> {
+    let contents = std::fs::read_to_string("/proc/meminfo").ok()?;
+    super::parse_proc_meminfo_pct(&contents)
+}
+
+/// Cheap presence check (no process spawn) for any supported GPU metrics source.
+/// Used once at startup to decide whether to ever spawn `nvidia-smi`.
+pub fn gpu_monitor_supported() -> bool {
+    find_in_path("nvidia-smi").is_some() || first_amd_gpu_busy_path().is_some()
+}
+
+/// Sample GPU utilization, preferring a discrete NVIDIA GPU, then AMD sysfs.
+/// This spawns `nvidia-smi` (tens of ms), so callers run it off the render path.
+pub fn read_gpu_sample() -> Option<super::GpuSample> {
+    read_nvidia_gpu().or_else(read_amd_gpu)
+}
+
+fn read_nvidia_gpu() -> Option<super::GpuSample> {
+    let program = find_in_path("nvidia-smi")?;
+    let output = Command::new(program)
+        .args([
+            "--query-gpu=utilization.gpu,memory.used,memory.total",
+            "--format=csv,noheader,nounits",
+        ])
+        .stdin(Stdio::null())
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    stdout.lines().next().and_then(super::parse_nvidia_smi_line)
+}
+
+fn read_amd_gpu() -> Option<super::GpuSample> {
+    let path = first_amd_gpu_busy_path()?;
+    let contents = std::fs::read_to_string(path).ok()?;
+    super::parse_amd_gpu_busy(&contents)
+}
+
+/// First `/sys/class/drm/card<N>/device/gpu_busy_percent` that exists, if any.
+fn first_amd_gpu_busy_path() -> Option<PathBuf> {
+    let entries = std::fs::read_dir("/sys/class/drm").ok()?;
+    let mut cards: Vec<PathBuf> = entries
+        .filter_map(|entry| entry.ok().map(|e| e.path()))
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                // `cardN`, not the `cardN-<connector>` output nodes.
+                .is_some_and(|name| {
+                    name.strip_prefix("card").is_some_and(|rest| {
+                        !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit())
+                    })
+                })
+        })
+        .collect();
+    cards.sort();
+    cards
+        .into_iter()
+        .map(|card| card.join("device/gpu_busy_percent"))
+        .find(|path| path.exists())
+}
+
+/// Locate an executable on `PATH` without spawning it.
+fn find_in_path(binary: &str) -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path)
+        .map(|dir| dir.join(binary))
+        .find(|candidate| candidate.is_file())
 }
 
 #[cfg(test)]

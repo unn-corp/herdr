@@ -2,8 +2,8 @@ use crate::api::schema::{
     EmptyParams, LayoutSetSplitRatioParams, Method, PaneFocusDirectionParams, PaneRenameParams,
     PaneResizeParams, PaneSplitParams, PaneSwapParams, PaneTarget, PaneZoomParams, TabCreateParams,
     TabMoveParams, TabRenameParams, TabTarget, WorkspaceCreateParams, WorkspaceMoveParams,
-    WorkspaceRenameParams, WorkspaceTarget, WorktreeCreateParams, WorktreeOpenParams,
-    WorktreeRemoveParams,
+    WorkspaceRenameParams, WorkspaceSetCwdParams, WorkspaceTarget, WorktreeCreateParams,
+    WorktreeOpenParams, WorktreeRemoveParams,
 };
 
 use super::App;
@@ -43,6 +43,14 @@ impl App {
         params: WorkspaceRenameParams,
     ) -> String {
         self.dispatch_runtime_mutation(id, Method::WorkspaceRename(params))
+    }
+
+    pub(crate) fn runtime_workspace_set_cwd(
+        &mut self,
+        id: &'static str,
+        params: WorkspaceSetCwdParams,
+    ) -> String {
+        self.dispatch_runtime_mutation(id, Method::WorkspaceSetCwd(params))
     }
 
     pub(crate) fn runtime_workspace_move(

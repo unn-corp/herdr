@@ -45,6 +45,11 @@ pub fn foreground_job(_child_pid: u32) -> Option<ForegroundJob> {
 }
 
 /// Unsupported platform stub.
+pub fn descendant_processes(_root_pid: u32) -> Vec<ForegroundProcess> {
+    Vec::new()
+}
+
+/// Unsupported platform stub.
 pub fn foreground_group_leader_job(_process_group_id: u32) -> Option<ForegroundJob> {
     None
 }

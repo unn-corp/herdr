@@ -30,8 +30,21 @@ pub(super) fn render_panel_shell(
 }
 
 pub(super) fn panel_contrast_fg(p: &Palette) -> Color {
+    // This is drawn as the foreground for text sitting on an accent-colored
+    // background (the active tab, selected menu rows, action buttons). Pick pure
+    // black or white by the accent's perceived luminance so the text stays
+    // readable on any theme, and independent of a transparent background (which
+    // zeroes out panel_bg / surface_dim).
+    if let Color::Rgb(r, g, b) = p.accent {
+        let luminance = 0.299 * f32::from(r) + 0.587 * f32::from(g) + 0.114 * f32::from(b);
+        return if luminance > 140.0 {
+            Color::Black
+        } else {
+            Color::White
+        };
+    }
     match p.panel_bg {
-        Color::Reset => p.surface_dim,
+        Color::Reset => Color::Black,
         color => color,
     }
 }

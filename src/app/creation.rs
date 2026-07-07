@@ -30,6 +30,26 @@ pub(crate) fn resolve_new_terminal_cwd(
     }
 }
 
+/// Resolve the cwd for a new terminal, layering per-workspace precedence over the
+/// global policy: explicit arg wins, then the workspace default, then the policy.
+pub(crate) fn resolve_terminal_cwd(
+    explicit_cwd: Option<PathBuf>,
+    workspace_default: Option<&str>,
+    policy: &NewTerminalCwdConfig,
+    follow_cwd: Option<PathBuf>,
+) -> PathBuf {
+    if let Some(cwd) = explicit_cwd {
+        return cwd;
+    }
+    if let Some(default) = workspace_default {
+        let trimmed = default.trim();
+        if !trimmed.is_empty() {
+            return crate::worktree::expand_tilde_path(trimmed);
+        }
+    }
+    resolve_new_terminal_cwd(policy, follow_cwd)
+}
+
 impl App {
     pub(super) fn seed_cwd_from_workspace(&self, ws_idx: usize) -> Option<PathBuf> {
         self.state
@@ -57,6 +77,27 @@ impl App {
 
     pub(super) fn resolve_new_terminal_cwd(&self, follow_cwd: Option<PathBuf>) -> PathBuf {
         resolve_new_terminal_cwd(&self.state.new_terminal_cwd, follow_cwd)
+    }
+
+    /// Like [`Self::resolve_new_terminal_cwd`], but honors a per-workspace default
+    /// cwd: explicit arg wins, then the workspace default, then the global policy.
+    pub(super) fn resolve_new_terminal_cwd_for_ws(
+        &self,
+        ws_idx: usize,
+        explicit_cwd: Option<PathBuf>,
+        follow_cwd: Option<PathBuf>,
+    ) -> PathBuf {
+        let workspace_default = self
+            .state
+            .workspaces
+            .get(ws_idx)
+            .and_then(|ws| ws.default_cwd.as_deref());
+        resolve_terminal_cwd(
+            explicit_cwd,
+            workspace_default,
+            &self.state.new_terminal_cwd,
+            follow_cwd,
+        )
     }
 
     pub(super) fn workspace_creation_source(&self) -> Option<usize> {
@@ -475,4 +516,59 @@ fn terminal_agent_session_info(
             kind: session.session_ref.kind,
             value: session.session_ref.value.clone(),
         })
+}
+
+#[cfg(test)]
+mod resolve_terminal_cwd_tests {
+    use super::resolve_terminal_cwd;
+    use crate::config::NewTerminalCwdConfig;
+    use std::path::PathBuf;
+
+    #[test]
+    fn explicit_cwd_wins_over_workspace_default_and_policy() {
+        let cwd = resolve_terminal_cwd(
+            Some(PathBuf::from("/tmp/explicit")),
+            Some("/tmp/ws-default"),
+            &NewTerminalCwdConfig::Path("/tmp/policy".into()),
+            Some(PathBuf::from("/tmp/follow")),
+        );
+
+        assert_eq!(cwd, PathBuf::from("/tmp/explicit"));
+    }
+
+    #[test]
+    fn workspace_default_used_when_no_explicit() {
+        let cwd = resolve_terminal_cwd(
+            None,
+            Some("/tmp/ws-default"),
+            &NewTerminalCwdConfig::Path("/tmp/policy".into()),
+            Some(PathBuf::from("/tmp/follow")),
+        );
+
+        assert_eq!(cwd, PathBuf::from("/tmp/ws-default"));
+    }
+
+    #[test]
+    fn empty_workspace_default_falls_through_to_policy() {
+        let cwd = resolve_terminal_cwd(
+            None,
+            Some("   "),
+            &NewTerminalCwdConfig::Path("/tmp/policy".into()),
+            None,
+        );
+
+        assert_eq!(cwd, PathBuf::from("/tmp/policy"));
+    }
+
+    #[test]
+    fn falls_back_to_follow_under_follow_policy() {
+        let cwd = resolve_terminal_cwd(
+            None,
+            None,
+            &NewTerminalCwdConfig::Follow,
+            Some(PathBuf::from("/tmp/follow")),
+        );
+
+        assert_eq!(cwd, PathBuf::from("/tmp/follow"));
+    }
 }

@@ -55,6 +55,10 @@ pub struct WorkspaceSnapshot {
     pub identity_cwd: PathBuf,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub worktree_space: Option<crate::workspace::WorktreeSpaceMembership>,
+    /// User-set default cwd for new tabs/panes in this workspace. Raw path
+    /// expression (may contain `~`); `None` inherits the global cwd policy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_cwd: Option<String>,
     #[serde(default)]
     pub public_pane_numbers: HashMap<u32, usize>,
     #[serde(default)]
@@ -156,6 +160,7 @@ impl From<LegacyWorkspaceSnapshot> for WorkspaceSnapshot {
             custom_name: snap.custom_name,
             identity_cwd,
             worktree_space: None,
+            default_cwd: None,
             public_pane_numbers: HashMap::new(),
             next_public_pane_number: 0,
             public_tab_numbers: Vec::new(),
@@ -289,6 +294,7 @@ fn capture_workspace(
             .resolved_identity_cwd_from(terminals, terminal_runtimes)
             .unwrap_or_else(|| ws.identity_cwd.clone()),
         worktree_space: ws.worktree_space.clone(),
+        default_cwd: ws.default_cwd.clone(),
         public_pane_numbers: ws
             .public_pane_numbers
             .iter()
@@ -626,6 +632,7 @@ mod tests {
                 id: Some("wproj".to_string()),
                 custom_name: Some("pi-mono".to_string()),
                 identity_cwd: PathBuf::from("/home/can/Projects/herdr"),
+                default_cwd: None,
                 worktree_space: None,
                 public_pane_numbers: HashMap::from([(0, 1), (1, 2)]),
                 next_public_pane_number: 3,
@@ -1150,6 +1157,37 @@ mod tests {
     }
 
     #[test]
+    fn default_cwd_deserializes_and_reserializes_when_present() {
+        let json = r#"{"identity_cwd":"/tmp","default_cwd":"~/proj","tabs":[]}"#;
+        let ws: WorkspaceSnapshot = serde_json::from_str(json).unwrap();
+        assert_eq!(ws.default_cwd.as_deref(), Some("~/proj"));
+        let reserialized = serde_json::to_string(&ws).unwrap();
+        assert!(reserialized.contains(r#""default_cwd":"~/proj""#));
+    }
+
+    #[test]
+    fn default_cwd_absent_in_old_snapshot_deserializes_to_none() {
+        let json = r#"{"custom_name":"test","identity_cwd":"/tmp","tabs":[]}"#;
+        let ws: WorkspaceSnapshot = serde_json::from_str(json).unwrap();
+        assert_eq!(ws.default_cwd, None);
+        // Absent value must not be written back out, keeping old files clean.
+        let reserialized = serde_json::to_string(&ws).unwrap();
+        assert!(!reserialized.contains("default_cwd"));
+    }
+
+    #[test]
+    fn capture_persists_workspace_default_cwd() {
+        let mut ws = crate::workspace::Workspace::test_new("ws");
+        ws.set_default_cwd(Some("~/proj".to_string()));
+        let snap = capture_workspace(
+            &ws,
+            &std::collections::HashMap::new(),
+            &crate::terminal::TerminalRuntimeRegistry::new(),
+        );
+        assert_eq!(snap.default_cwd.as_deref(), Some("~/proj"));
+    }
+
+    #[test]
     fn restore_falls_back_to_home_when_cwd_missing() {
         let mut panes = HashMap::new();
         panes.insert(
@@ -1182,6 +1220,7 @@ mod tests {
                 custom_name: Some("fallback test".to_string()),
                 identity_cwd: PathBuf::from("/tmp"),
                 worktree_space: None,
+                default_cwd: None,
                 public_pane_numbers: HashMap::new(),
                 next_public_pane_number: 0,
                 public_tab_numbers: Vec::new(),

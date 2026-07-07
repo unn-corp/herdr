@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use crate::api::schema::{
     EventData, EventEnvelope, EventKind, ResponseResult, WorkspaceCreateParams,
-    WorkspaceMoveParams, WorkspaceRenameParams, WorkspaceTarget,
+    WorkspaceMoveParams, WorkspaceRenameParams, WorkspaceSetCwdParams, WorkspaceTarget,
 };
 use crate::app::App;
 
@@ -116,6 +116,28 @@ impl App {
         )
     }
 
+    pub(super) fn handle_workspace_set_cwd(
+        &mut self,
+        id: String,
+        params: WorkspaceSetCwdParams,
+    ) -> String {
+        let Some(index) = self.parse_workspace_id(&params.workspace_id) else {
+            return workspace_not_found(id, &params.workspace_id);
+        };
+        let Some(ws) = self.state.workspaces.get_mut(index) else {
+            return workspace_not_found(id, &params.workspace_id);
+        };
+        ws.set_default_cwd(params.cwd);
+        self.schedule_session_save();
+
+        encode_success(
+            id,
+            ResponseResult::WorkspaceInfo {
+                workspace: self.workspace_info(index),
+            },
+        )
+    }
+
     pub(super) fn handle_workspace_move(
         &mut self,
         id: String,
@@ -212,6 +234,44 @@ fn workspace_not_found(id: String, workspace_id: &str) -> String {
 mod tests {
     use super::*;
     use crate::{api::schema::SuccessResponse, config::Config, workspace::Workspace};
+
+    #[test]
+    fn workspace_set_cwd_sets_and_clears_default() {
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            &Config::default(),
+            true,
+            None,
+            api_rx,
+            crate::api::EventHub::default(),
+        );
+        app.state.workspaces = vec![Workspace::test_new("spaces")];
+        app.state.active = Some(0);
+        let ws_id = app.public_workspace_id(0);
+
+        let response = app.handle_workspace_set_cwd(
+            "set".into(),
+            WorkspaceSetCwdParams {
+                workspace_id: ws_id.clone(),
+                cwd: Some("~/proj".to_string()),
+            },
+        );
+        let _: SuccessResponse = serde_json::from_str(&response).unwrap();
+        assert_eq!(
+            app.state.workspaces[0].default_cwd.as_deref(),
+            Some("~/proj")
+        );
+
+        let response = app.handle_workspace_set_cwd(
+            "clear".into(),
+            WorkspaceSetCwdParams {
+                workspace_id: ws_id,
+                cwd: None,
+            },
+        );
+        let _: SuccessResponse = serde_json::from_str(&response).unwrap();
+        assert_eq!(app.state.workspaces[0].default_cwd, None);
+    }
 
     // `new_cwd = follow` must anchor on the focused pane for every creation
     // surface. Splits and tabs already do; a new workspace must follow the

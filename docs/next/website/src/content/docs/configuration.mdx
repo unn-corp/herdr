@@ -316,6 +316,9 @@ pane_gaps = true
 show_agent_labels_on_pane_borders = false
 hide_tab_bar_when_single_tab = false
 agent_panel_sort = "spaces"
+system_monitor = false
+system_monitor_interval_ms = 2000
+transparent_background = false
 accent = "cyan"
 ```
 
@@ -344,6 +347,10 @@ Set `pane_borders = false` to remove split pane borders. Set `pane_gaps = false`
 Set `show_agent_labels_on_pane_borders = true` if you want detected agent labels in split pane borders when no manual pane label is set.
 
 Set `hide_tab_bar_when_single_tab = true` to hide the tab row when the active workspace has exactly one tab. New tabs can still be created with the configured keybinding. When a second tab appears, Herdr restores the tab row and resizes panes to make room for it.
+
+Set `system_monitor = true` to show a one-row CPU / RAM / GPU usage strip at the top of each space. CPU comes from `/proc/stat` and memory from `/proc/meminfo`; GPU utilization is read from `nvidia-smi` first, then an AMD `gpu_busy_percent` sysfs node, and the GPU segment is hidden when neither is available (VRAM used shows in parentheses after GPU utilization). `system_monitor_interval_ms` sets the refresh cadence (default 2000). The GPU read runs off the render loop so it never stalls the UI. The strip also shows the active space's git branch and its uncommitted-change count. System metrics are read on Linux; other platforms show CPU and RAM as unavailable.
+
+Set `transparent_background = true` to make all Herdr chrome (sidebar, bars, the monitor strip, and panels) use the terminal's default background instead of the theme's solid fills, so a transparent terminal window shows through. Foreground and accent colors are unchanged. Enable your terminal emulator's background opacity/transparency for the effect to be visible.
 
 ## Notifications
 

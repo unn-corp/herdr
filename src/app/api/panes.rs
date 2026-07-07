@@ -50,10 +50,11 @@ impl App {
             Err((code, message)) => return encode_error(id, &code, message),
         };
         let (rows, cols) = self.state.estimate_pane_size();
-        let split_cwd = params.cwd.map(std::path::PathBuf::from).or_else(|| {
-            let follow_cwd = self.cwd_for_pane_in_workspace(ws_idx, target_pane_id);
-            Some(self.resolve_new_terminal_cwd(follow_cwd))
-        });
+        let split_cwd = Some(self.resolve_new_terminal_cwd_for_ws(
+            ws_idx,
+            params.cwd.map(std::path::PathBuf::from),
+            self.cwd_for_pane_in_workspace(ws_idx, target_pane_id),
+        ));
         let default_shell = self.state.default_shell.clone();
         let scrollback_limit_bytes = self.state.pane_scrollback_limit_bytes;
         let host_terminal_theme = self.state.host_terminal_theme;

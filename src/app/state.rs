@@ -515,6 +515,17 @@ impl Palette {
     }
 
     /// Apply custom color overrides on top of this palette.
+    /// Replace every background-fill role with the terminal's default color, so
+    /// Herdr's chrome renders transparent and a translucent terminal shows
+    /// through. Foreground and accent colors are left untouched.
+    pub fn with_transparent_backgrounds(mut self) -> Self {
+        self.panel_bg = Color::Reset;
+        self.surface0 = Color::Reset;
+        self.surface1 = Color::Reset;
+        self.surface_dim = Color::Reset;
+        self
+    }
+
     pub fn with_overrides(mut self, custom: &crate::config::CustomThemeColors) -> Self {
         use crate::config::parse_color;
         if let Some(c) = &custom.accent {
@@ -737,6 +748,8 @@ pub struct ViewState {
     pub tab_scroll_right_hit_area: Rect,
     pub new_tab_hit_area: Rect,
     pub terminal_area: Rect,
+    /// One-row strip above the tab bar for the system monitor, or empty when off.
+    pub monitor_rect: Rect,
     pub mobile_header_rect: Rect,
     pub mobile_menu_hit_area: Rect,
     pub toast_hit_area: Rect,
@@ -756,6 +769,7 @@ pub enum Mode {
     RenameWorkspace,
     RenameTab,
     RenamePane,
+    SetWorkspaceDir,
     NewLinkedWorktree,
     OpenExistingWorktree,
     ConfirmRemoveWorktree,
@@ -1013,6 +1027,8 @@ pub struct ThemeRuntimeConfig {
     pub auto_switch: bool,
     pub custom: Option<crate::config::CustomThemeColors>,
     pub legacy_accent: Option<String>,
+    /// Replace the theme's background fills with the terminal default (transparent).
+    pub transparent_background: bool,
 }
 
 pub struct SettingsState {
@@ -1118,16 +1134,34 @@ pub struct ContextMenuState {
 impl ContextMenuState {
     pub fn items(&self) -> &'static [&'static str] {
         match self.kind {
-            ContextMenuKind::Workspace { .. } => &["Rename", "Close"],
+            ContextMenuKind::Workspace { .. } => &[
+                "Rename",
+                "Set Default Directory",
+                "Clear Default Directory",
+                "Close",
+            ],
             ContextMenuKind::GitWorkspace {
                 is_linked_worktree: false,
                 has_worktree_children: false,
                 ..
-            } => &["Rename", "Close", "New worktree", "Open worktree..."],
+            } => &[
+                "Rename",
+                "Set Default Directory",
+                "Clear Default Directory",
+                "Close",
+                "New worktree",
+                "Open worktree...",
+            ],
             ContextMenuKind::GitWorkspace {
                 is_linked_worktree: true,
                 ..
-            } => &["Rename", "Close", "Delete worktree checkout..."],
+            } => &[
+                "Rename",
+                "Set Default Directory",
+                "Clear Default Directory",
+                "Close",
+                "Delete worktree checkout...",
+            ],
             ContextMenuKind::GitWorkspace {
                 is_linked_worktree: false,
                 has_worktree_children: true,
@@ -1135,6 +1169,8 @@ impl ContextMenuState {
                 ..
             } => &[
                 "Rename",
+                "Set Default Directory",
+                "Clear Default Directory",
                 "Close group",
                 "New worktree",
                 "Open worktree...",
@@ -1147,6 +1183,8 @@ impl ContextMenuState {
                 ..
             } => &[
                 "Rename",
+                "Set Default Directory",
+                "Clear Default Directory",
                 "Close group",
                 "New worktree",
                 "Open worktree...",
@@ -1394,6 +1432,13 @@ pub struct AppState {
     pub pane_gaps: bool,
     pub show_agent_labels_on_pane_borders: bool,
     pub hide_tab_bar_when_single_tab: bool,
+    /// Whether to reserve and draw the top-of-space system monitor strip.
+    pub system_monitor_enabled: bool,
+    /// Latest CPU/RAM/GPU sample for the monitor strip, or `None` until first sampled.
+    pub system_monitor: Option<crate::platform::SystemSample>,
+    /// Per-pane git branch + uncommitted count, keyed by pane. Refreshed in the
+    /// background so the strip and agent sidebar can show per-conversation git.
+    pub pane_git: std::collections::HashMap<PaneId, crate::workspace::PaneGitStatus>,
     pub pane_history_persistence: bool,
     /// Expose the focused pane's cursor anchor to the outer terminal even when
     /// the pane requested `?25l`. See `[experimental] reveal_hidden_cursor_for_cjk_ime`.
@@ -1706,6 +1751,7 @@ impl AppState {
                 tab_scroll_right_hit_area: Rect::default(),
                 new_tab_hit_area: Rect::default(),
                 terminal_area: Rect::default(),
+                monitor_rect: Rect::default(),
                 mobile_header_rect: Rect::default(),
                 mobile_menu_hit_area: Rect::default(),
                 toast_hit_area: Rect::default(),
@@ -1752,6 +1798,9 @@ impl AppState {
             pane_gaps: false,
             show_agent_labels_on_pane_borders: false,
             hide_tab_bar_when_single_tab: false,
+            system_monitor_enabled: false,
+            system_monitor: None,
+            pane_git: std::collections::HashMap::new(),
             pane_history_persistence: false,
             reveal_hidden_cursor_for_cjk_ime: false,
             cjk_ime_agent_filter_configured: false,
@@ -1781,6 +1830,7 @@ impl AppState {
                 auto_switch: false,
                 custom: None,
                 legacy_accent: None,
+                transparent_background: false,
             },
             host_terminal_appearance: None,
             host_terminal_appearance_explicit: false,
@@ -2244,7 +2294,13 @@ mod tests {
 
         assert_eq!(
             menu.items(),
-            &["Rename", "Close", "Delete worktree checkout..."]
+            &[
+                "Rename",
+                "Set Default Directory",
+                "Clear Default Directory",
+                "Close",
+                "Delete worktree checkout..."
+            ]
         );
     }
 
@@ -2264,7 +2320,14 @@ mod tests {
 
         assert_eq!(
             menu.items(),
-            &["Rename", "Close", "New worktree", "Open worktree..."]
+            &[
+                "Rename",
+                "Set Default Directory",
+                "Clear Default Directory",
+                "Close",
+                "New worktree",
+                "Open worktree..."
+            ]
         );
     }
 
@@ -2286,6 +2349,8 @@ mod tests {
             menu.items(),
             &[
                 "Rename",
+                "Set Default Directory",
+                "Clear Default Directory",
                 "Close group",
                 "New worktree",
                 "Open worktree...",

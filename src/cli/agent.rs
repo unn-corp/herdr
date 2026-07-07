@@ -644,6 +644,7 @@ fn agent_wait_status_satisfied(desired: AgentStatus, current: &str) -> bool {
     match desired {
         AgentStatus::Idle => matches!(current, "idle" | "done"),
         AgentStatus::Working => current == "working",
+        AgentStatus::Waiting => current == "waiting",
         AgentStatus::Blocked => current == "blocked",
         AgentStatus::Unknown => current == "unknown",
         AgentStatus::Done => false,
@@ -654,13 +655,14 @@ fn parse_agent_wait_status(value: &str) -> std::io::Result<AgentStatus> {
     match value {
         "idle" => Ok(AgentStatus::Idle),
         "working" => Ok(AgentStatus::Working),
+        "waiting" => Ok(AgentStatus::Waiting),
         "blocked" => Ok(AgentStatus::Blocked),
         "unknown" => Ok(AgentStatus::Unknown),
         "done" => Err(std::io::Error::other(
             "done is a UI attention state; use idle for CLI agent completion waits",
         )),
         _ => Err(std::io::Error::other(format!(
-            "invalid agent status: {value} (expected idle, working, blocked, or unknown)"
+            "invalid agent status: {value} (expected idle, working, waiting, blocked, or unknown)"
         ))),
     }
 }

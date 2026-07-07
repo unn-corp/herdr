@@ -221,6 +221,9 @@ async fn apply_agent_detection_publish_update(
 
 const AGENT_MISS_CONFIRMATION_ATTEMPTS: u8 = 6;
 const PROCESS_RECHECK_IDENTIFIED: std::time::Duration = std::time::Duration::from_secs(5);
+/// How often to scan a pane's process subtree for a long-running command that
+/// puts the pane in the `Waiting` state. Cheap per-pane `/proc` walk, throttled.
+const WAIT_DESCENDANT_SCAN_INTERVAL: std::time::Duration = std::time::Duration::from_millis(800);
 const PROCESS_RECHECK_MISSING_FOREGROUND_GROUP: std::time::Duration =
     std::time::Duration::from_secs(30);
 const PROCESS_ACQUISITION_WINDOW: std::time::Duration = std::time::Duration::from_secs(8);
@@ -560,6 +563,8 @@ fn spawn_basic_detection_task(
         let mut last_visible_signal_refresh = None;
         let mut last_process_check = std::time::Instant::now();
         let mut last_foreground_pgid = None;
+        let mut last_wait_descendant = false;
+        let mut last_wait_scan_at: Option<std::time::Instant> = None;
         let mut has_process_probe = false;
         let mut acquisition_started_at = None;
         let mut last_content_change_at = None;
@@ -588,6 +593,8 @@ fn spawn_basic_detection_task(
                     last_visible_signal_refresh = None;
                     last_process_check = std::time::Instant::now();
                     last_foreground_pgid = None;
+                    last_wait_descendant = false;
+                    last_wait_scan_at = None;
                     has_process_probe = false;
                     acquisition_started_at = None;
                     last_content_change_at = None;
@@ -718,6 +725,56 @@ fn spawn_basic_detection_task(
                             agent_startup_grace_until = None;
                         }
                     }
+                }
+            }
+
+            // "Waiting" state: a shell or agent is blocked on a long-running
+            // command it spawned (deploy, build, pull, install, sleep). The tty
+            // foreground group can't see this for full-screen agents that keep
+            // the terminal, so scan the pane's process subtree instead. When a
+            // wait command is running we hold Waiting and skip screen detection;
+            // once it clears, agents resume normal detection and shells revert
+            // to Unknown. Waiting ranks below working in attention priority.
+            if !lifecycle_authority_active && pid > 0 {
+                if last_wait_scan_at.is_none_or(|scanned| {
+                    now.duration_since(scanned) >= WAIT_DESCENDANT_SCAN_INTERVAL
+                }) {
+                    last_wait_scan_at = Some(now);
+                    last_wait_descendant = crate::detect::has_wait_command_descendant(pid);
+                }
+                if last_wait_descendant {
+                    if state != AgentState::Waiting {
+                        state = AgentState::Waiting;
+                        publish_state_changed_event(
+                            state_events.clone(),
+                            pane_id,
+                            agent,
+                            AgentState::Waiting,
+                            false,
+                            false,
+                            false,
+                            now,
+                        )
+                        .await;
+                    }
+                    pending_idle.clear();
+                    continue;
+                }
+                if agent.is_none() && state == AgentState::Waiting {
+                    state = AgentState::Unknown;
+                    publish_state_changed_event(
+                        state_events.clone(),
+                        pane_id,
+                        None,
+                        AgentState::Unknown,
+                        false,
+                        false,
+                        false,
+                        now,
+                    )
+                    .await;
+                    pending_idle.clear();
+                    continue;
                 }
             }
 

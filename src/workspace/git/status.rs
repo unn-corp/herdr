@@ -49,16 +49,41 @@ pub fn git_status_cache_key(cwd: &Path) -> Option<PathBuf> {
     git_worktree_info(cwd).map(|info| canonicalize_best_effort_path(&info.repo_root))
 }
 
+/// Count of uncommitted changes (staged, unstaged, and untracked entries) via
+/// `git status --porcelain`. Recomputed on every refresh because it reflects
+/// working-tree state, which the HEAD/upstream fingerprint does not capture.
+pub(crate) fn git_dirty_count(cwd: &Path) -> Option<usize> {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(cwd)
+        .args(["status", "--porcelain"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let count = output
+        .stdout
+        .split(|&byte| byte == b'\n')
+        .filter(|line| !line.is_empty())
+        .count();
+    Some(count)
+}
+
 pub fn git_status_snapshot_for_cwd(
     cwd: &Path,
     cached: Option<&GitStatusCacheEntry>,
 ) -> (WorkspaceGitStatusSnapshot, Option<GitStatusCacheEntry>) {
     let space = git_space_metadata(cwd);
+    // The dirty count tracks the working tree, so it is never served from the
+    // fingerprint cache; it is recomputed each refresh.
+    let dirty = git_dirty_count(cwd);
     let Some(fingerprint) = git_status_fingerprint(cwd) else {
         return (
             WorkspaceGitStatusSnapshot {
                 branch: git_branch(cwd),
                 ahead_behind: None,
+                dirty,
                 space,
             },
             None,
@@ -70,6 +95,7 @@ pub fn git_status_snapshot_for_cwd(
         let snapshot = WorkspaceGitStatusSnapshot {
             branch,
             ahead_behind: cached.snapshot.ahead_behind,
+            dirty,
             space,
         };
         return (
@@ -88,6 +114,7 @@ pub fn git_status_snapshot_for_cwd(
     let snapshot = WorkspaceGitStatusSnapshot {
         branch,
         ahead_behind,
+        dirty,
         space,
     };
     (
@@ -267,6 +294,7 @@ mod tests {
             snapshot: WorkspaceGitStatusSnapshot {
                 branch: Some("main".into()),
                 ahead_behind: Some((2, 1)),
+                dirty: None,
                 space: git_space_metadata(&root),
             },
         };
@@ -290,6 +318,7 @@ mod tests {
             snapshot: WorkspaceGitStatusSnapshot {
                 branch: Some("main".into()),
                 ahead_behind: Some((4, 0)),
+                dirty: None,
                 space: git_space_metadata(&root),
             },
         };
@@ -323,6 +352,7 @@ mod tests {
             snapshot: WorkspaceGitStatusSnapshot {
                 branch: Some("main".into()),
                 ahead_behind: Some((0, 3)),
+                dirty: None,
                 space: git_space_metadata(&root),
             },
         };

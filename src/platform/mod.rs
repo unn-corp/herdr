@@ -128,6 +128,138 @@ pub(crate) fn read_limited_reader(
     }
 }
 
+// ---------------------------------------------------------------------------
+// System monitor metrics (CPU / RAM / GPU)
+//
+// Presentation-only sampling for the optional top-of-space monitor strip. The
+// neutral types and the pure parsers live here (unit-tested without touching
+// the filesystem); the real `/proc` and GPU reads live in the per-OS modules.
+// Non-Linux targets fall back to "unavailable" so the strip simply stays empty.
+// ---------------------------------------------------------------------------
+
+/// A CPU busy/idle snapshot from `/proc/stat`, differenced across ticks to get a
+/// non-blocking busy percentage (no in-sample `sleep`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct CpuSnapshot {
+    pub total: u64,
+    pub idle: u64,
+}
+
+/// A GPU utilization sample. `vram_pct` is `None` when memory info is unavailable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GpuSample {
+    pub util_pct: u8,
+    pub vram_pct: Option<u8>,
+}
+
+/// One system-monitor sample. Each field is `None` when that metric could not be read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct SystemSample {
+    pub cpu_pct: Option<u8>,
+    pub ram_pct: Option<u8>,
+    pub gpu: Option<GpuSample>,
+}
+
+/// Parse the aggregate `cpu` line of `/proc/stat` into a snapshot. `idle`
+/// folds in `iowait`; `total` sums every reported class.
+pub fn parse_proc_stat_cpu(contents: &str) -> Option<CpuSnapshot> {
+    let line = contents.lines().next()?;
+    let mut fields = line.split_whitespace();
+    if fields.next()? != "cpu" {
+        return None;
+    }
+    let values: Vec<u64> = fields.filter_map(|field| field.parse().ok()).collect();
+    // user nice system idle iowait irq softirq steal guest guest_nice
+    if values.len() < 4 {
+        return None;
+    }
+    let idle = values[3].saturating_add(values.get(4).copied().unwrap_or(0));
+    let total: u64 = values.iter().copied().fold(0u64, u64::saturating_add);
+    Some(CpuSnapshot { total, idle })
+}
+
+/// Compute a CPU busy percentage from two `/proc/stat` snapshots. Returns
+/// `None` when the counters did not advance (or went backwards after a reset).
+pub fn cpu_pct_from_delta(prev: CpuSnapshot, cur: CpuSnapshot) -> Option<u8> {
+    let total = cur.total.checked_sub(prev.total)?;
+    let idle = cur.idle.checked_sub(prev.idle)?;
+    if total == 0 {
+        return None;
+    }
+    let busy = total.saturating_sub(idle);
+    Some((busy.saturating_mul(100) / total).min(100) as u8)
+}
+
+/// Parse `/proc/meminfo` into a used-memory percentage from `MemTotal` and
+/// `MemAvailable` (the kernel's own "available" estimate, matching `free`).
+pub fn parse_proc_meminfo_pct(contents: &str) -> Option<u8> {
+    let mut total_kb = None;
+    let mut avail_kb = None;
+    for line in contents.lines() {
+        if let Some(rest) = line.strip_prefix("MemTotal:") {
+            total_kb = rest
+                .split_whitespace()
+                .next()
+                .and_then(|v| v.parse::<u64>().ok());
+        } else if let Some(rest) = line.strip_prefix("MemAvailable:") {
+            avail_kb = rest
+                .split_whitespace()
+                .next()
+                .and_then(|v| v.parse::<u64>().ok());
+        }
+        if total_kb.is_some() && avail_kb.is_some() {
+            break;
+        }
+    }
+    let total = total_kb?;
+    if total == 0 {
+        return None;
+    }
+    let avail = avail_kb?.min(total);
+    let used = total - avail;
+    Some((used.saturating_mul(100) / total) as u8)
+}
+
+/// Parse one CSV row from `nvidia-smi --query-gpu=utilization.gpu,memory.used,
+/// memory.total --format=csv,noheader,nounits`.
+pub fn parse_nvidia_smi_line(line: &str) -> Option<GpuSample> {
+    let mut fields = line.split(',').map(str::trim);
+    let util: u8 = fields.next()?.parse().ok()?;
+    let used: f64 = fields.next().and_then(|v| v.parse().ok()).unwrap_or(0.0);
+    let total: f64 = fields.next().and_then(|v| v.parse().ok()).unwrap_or(0.0);
+    let vram_pct = (total > 0.0).then(|| ((used / total) * 100.0).round().clamp(0.0, 100.0) as u8);
+    Some(GpuSample {
+        util_pct: util.min(100),
+        vram_pct,
+    })
+}
+
+/// Parse an AMD `gpu_busy_percent` sysfs value (a bare integer percentage).
+pub fn parse_amd_gpu_busy(contents: &str) -> Option<GpuSample> {
+    let util: u8 = contents.trim().parse().ok()?;
+    Some(GpuSample {
+        util_pct: util.min(100),
+        vram_pct: None,
+    })
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn read_cpu_snapshot() -> Option<CpuSnapshot> {
+    None
+}
+#[cfg(not(target_os = "linux"))]
+pub fn read_ram_pct() -> Option<u8> {
+    None
+}
+#[cfg(not(target_os = "linux"))]
+pub fn read_gpu_sample() -> Option<GpuSample> {
+    None
+}
+#[cfg(not(target_os = "linux"))]
+pub fn gpu_monitor_supported() -> bool {
+    false
+}
+
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "linux")]
@@ -263,6 +395,81 @@ mod tests {
             read_limited_reader(input, 4).expect("limited read"),
             LimitedRead::Oversized
         );
+    }
+
+    #[test]
+    fn parse_proc_stat_cpu_reads_aggregate_line() {
+        let snap = parse_proc_stat_cpu("cpu  100 0 50 800 50 0 0 0 0 0\ncpu0 1 2 3 4")
+            .expect("aggregate cpu line");
+        // total = 100+50+800+50 = 1000; idle = 800+50 = 850
+        assert_eq!(snap.total, 1000);
+        assert_eq!(snap.idle, 850);
+    }
+
+    #[test]
+    fn parse_proc_stat_cpu_rejects_non_cpu_first_line() {
+        assert!(parse_proc_stat_cpu("intr 1 2 3\ncpu 1 2 3 4").is_none());
+    }
+
+    #[test]
+    fn cpu_pct_from_delta_computes_busy_fraction() {
+        let prev = CpuSnapshot {
+            total: 1000,
+            idle: 900,
+        };
+        let cur = CpuSnapshot {
+            total: 1200,
+            idle: 1050,
+        };
+        // delta total 200, delta idle 150 -> busy 50 -> 25%
+        assert_eq!(cpu_pct_from_delta(prev, cur), Some(25));
+    }
+
+    #[test]
+    fn cpu_pct_from_delta_handles_no_progress_and_reset() {
+        let snap = CpuSnapshot {
+            total: 1000,
+            idle: 900,
+        };
+        assert_eq!(cpu_pct_from_delta(snap, snap), None);
+        let later = CpuSnapshot {
+            total: 500,
+            idle: 400,
+        };
+        assert_eq!(cpu_pct_from_delta(snap, later), None);
+    }
+
+    #[test]
+    fn parse_proc_meminfo_pct_uses_total_and_available() {
+        let contents = "MemTotal:       1000 kB\nMemFree: 100 kB\nMemAvailable:    250 kB\n";
+        // used = 1000 - 250 = 750 -> 75%
+        assert_eq!(parse_proc_meminfo_pct(contents), Some(75));
+    }
+
+    #[test]
+    fn parse_proc_meminfo_pct_requires_both_fields() {
+        assert!(parse_proc_meminfo_pct("MemTotal: 1000 kB\n").is_none());
+    }
+
+    #[test]
+    fn parse_nvidia_smi_line_reads_util_and_vram() {
+        let sample = parse_nvidia_smi_line("7, 4096, 24564").expect("nvidia line");
+        assert_eq!(sample.util_pct, 7);
+        assert_eq!(sample.vram_pct, Some(17));
+    }
+
+    #[test]
+    fn parse_nvidia_smi_line_without_memory_hides_vram() {
+        let sample = parse_nvidia_smi_line("42").expect("nvidia line");
+        assert_eq!(sample.util_pct, 42);
+        assert_eq!(sample.vram_pct, None);
+    }
+
+    #[test]
+    fn parse_amd_gpu_busy_reads_percentage() {
+        let sample = parse_amd_gpu_busy("63\n").expect("amd busy");
+        assert_eq!(sample.util_pct, 63);
+        assert_eq!(sample.vram_pct, None);
     }
 
     #[test]

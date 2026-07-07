@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "protocol": 16,
+  "protocol": 17,
   "schema_version": 1,
   "schemas": {
     "error_response": {
@@ -73,6 +73,7 @@
           "enum": [
             "idle",
             "working",
+            "waiting",
             "blocked",
             "done",
             "unknown"
@@ -1210,6 +1211,7 @@
           "enum": [
             "idle",
             "working",
+            "waiting",
             "blocked",
             "done",
             "unknown"
@@ -1908,6 +1910,7 @@
           "enum": [
             "idle",
             "working",
+            "waiting",
             "blocked",
             "unknown"
           ],
@@ -3523,6 +3526,24 @@
           ],
           "type": "object"
         },
+        "WorkspaceSetCwdParams": {
+          "properties": {
+            "cwd": {
+              "description": "Raw path expression (may contain `~`); `null`/absent clears the default.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "workspace_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "workspace_id"
+          ],
+          "type": "object"
+        },
         "WorkspaceTarget": {
           "properties": {
             "workspace_id": {
@@ -3928,6 +3949,22 @@
             },
             "params": {
               "$ref": "#/schemas/request/$defs/WorkspaceMoveParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "workspace.set_cwd",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/WorkspaceSetCwdParams"
             }
           },
           "required": [
@@ -4978,6 +5015,7 @@
           "enum": [
             "idle",
             "working",
+            "waiting",
             "blocked",
             "done",
             "unknown"
@@ -5338,6 +5376,7 @@
           "enum": [
             "idle",
             "working",
+            "waiting",
             "blocked",
             "done",
             "unknown"

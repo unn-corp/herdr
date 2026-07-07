@@ -335,9 +335,6 @@ impl App {
         replace_target: Option<(usize, usize)>,
         pane: &LayoutPane,
     ) -> PathBuf {
-        if let Some(cwd) = pane.cwd.as_ref() {
-            return PathBuf::from(cwd);
-        }
         let follow_cwd = replace_target.and_then(|(_, tab_idx)| {
             let ws = self.state.workspaces.get(ws_idx)?;
             let tab = ws.tabs.get(tab_idx)?;
@@ -347,7 +344,9 @@ impl App {
                 &self.terminal_runtimes,
             )
         });
-        self.resolve_new_terminal_cwd(
+        self.resolve_new_terminal_cwd_for_ws(
+            ws_idx,
+            pane.cwd.as_ref().map(PathBuf::from),
             follow_cwd.or_else(|| self.focused_pane_cwd_in_workspace(ws_idx)),
         )
     }

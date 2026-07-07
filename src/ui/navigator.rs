@@ -466,6 +466,7 @@ fn display_state(state: crate::detect::AgentState, seen: bool) -> &'static str {
     match (state, seen) {
         (crate::detect::AgentState::Blocked, _) => "blocked",
         (crate::detect::AgentState::Working, _) => "working",
+        (crate::detect::AgentState::Waiting, _) => "waiting",
         (crate::detect::AgentState::Idle, false) => "done",
         (crate::detect::AgentState::Idle, true) => "idle",
         (crate::detect::AgentState::Unknown, _) => "unknown",

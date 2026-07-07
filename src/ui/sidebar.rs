@@ -158,6 +158,7 @@ pub(super) fn agent_panel_status_key(state: AgentState, seen: bool) -> &'static 
         (AgentState::Idle, false) => "done",
         (AgentState::Idle, true) => "idle",
         (AgentState::Working, _) => "working",
+        (AgentState::Waiting, _) => "waiting",
         (AgentState::Blocked, _) => "blocked",
         (AgentState::Unknown, _) => "unknown",
     }
@@ -208,7 +209,9 @@ fn format_agent_panel_primary_label(entry: &AgentPanelEntry, max_width: usize) -
 }
 
 fn workspace_row_height(ws: &crate::workspace::Workspace) -> u16 {
-    if ws.branch().is_some() {
+    // The second row shows the space's default directory (branch moved to the
+    // per-conversation strip and agent rows).
+    if ws.default_cwd.is_some() {
         2
     } else {
         1
@@ -217,9 +220,10 @@ fn workspace_row_height(ws: &crate::workspace::Workspace) -> u16 {
 
 fn workspace_attention_priority(state: AgentState, seen: bool) -> u8 {
     match (state, seen) {
-        (AgentState::Blocked, _) => 4,
-        (AgentState::Idle, false) => 3,
-        (AgentState::Working, _) => 2,
+        (AgentState::Blocked, _) => 5,
+        (AgentState::Idle, false) => 4,
+        (AgentState::Working, _) => 3,
+        (AgentState::Waiting, _) => 2,
         (AgentState::Idle, true) => 1,
         (AgentState::Unknown, _) => 0,
     }
@@ -928,44 +932,20 @@ fn render_workspace_list(
         );
 
         if row_height > 1 && row_y + 1 < list_bottom {
-            if let Some(branch) = ws.branch() {
-                let upstream_label = ws.git_ahead_behind().and_then(|(ahead, behind)| {
-                    let mut parts = Vec::new();
-                    if ahead > 0 {
-                        parts.push((format!("↑{}", ahead), p.green));
-                    }
-                    if behind > 0 {
-                        parts.push((format!("↓{}", behind), p.red));
-                    }
-                    (!parts.is_empty()).then_some(parts)
-                });
-                let reserved = upstream_label
-                    .as_ref()
-                    .map(|parts| {
-                        parts.iter().map(|(label, _)| label.len()).sum::<usize>() + parts.len()
-                    })
-                    .unwrap_or(0);
-                let max_branch_len = (card.rect.width as usize).saturating_sub(5 + reserved);
-                let branch_display = truncate_end(&branch, max_branch_len);
-                let branch_color = if selected || is_active {
-                    p.mauve
+            if let Some(default_cwd) = ws.default_cwd.as_deref() {
+                let indent = if card.indented { "     " } else { "   " };
+                let max_len = (card.rect.width as usize).saturating_sub(indent.len() + 3);
+                let display = truncate_end(default_cwd, max_len);
+                let color = if selected || is_active {
+                    p.subtext0
                 } else {
                     p.overlay0
                 };
-                let branch_indent = if card.indented { "     " } else { "   " };
-                let mut spans = vec![
-                    Span::styled(branch_indent, Style::default()),
-                    Span::styled(branch_display, Style::default().fg(branch_color)),
+                let spans = vec![
+                    Span::styled(indent, Style::default()),
+                    Span::styled("↪ ", Style::default().fg(color)),
+                    Span::styled(display, Style::default().fg(color)),
                 ];
-                if let Some(parts) = upstream_label {
-                    spans.push(Span::styled(" ", Style::default()));
-                    for (idx, (label, color)) in parts.into_iter().enumerate() {
-                        if idx > 0 {
-                            spans.push(Span::styled(" ", Style::default()));
-                        }
-                        spans.push(Span::styled(label, Style::default().fg(color)));
-                    }
-                }
                 frame.render_widget(
                     Paragraph::new(Line::from(spans)),
                     Rect::new(card.rect.x, row_y + 1, card.rect.width, 1),
@@ -1121,6 +1101,18 @@ fn render_agent_detail(
         if let Some(custom_status) = &detail.custom_status {
             status_spans.push(Span::styled(" · ", agent_style));
             status_spans.push(Span::styled(custom_status.clone(), agent_style));
+        }
+        if let Some(git) = app.pane_git.get(&detail.pane_id) {
+            if let Some(branch) = &git.branch {
+                status_spans.push(Span::styled(" · ", agent_style));
+                status_spans.push(Span::styled(branch.clone(), Style::default().fg(p.mauve)));
+            }
+            if let Some(dirty) = git.dirty.filter(|count| *count > 0) {
+                status_spans.push(Span::styled(
+                    format!(" +{dirty}"),
+                    Style::default().fg(p.yellow).add_modifier(Modifier::DIM),
+                ));
+            }
         }
         frame.render_widget(
             Paragraph::new(Line::from(status_spans)).style(row_style),

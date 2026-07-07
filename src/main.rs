@@ -299,6 +299,16 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # "workspaces" is accepted as an alias for "spaces".
 # agent_panel_sort = "spaces"
 
+# Show a one-row CPU / RAM / GPU usage strip at the top of each space. It also
+# shows the active space's git branch and uncommitted-change count.
+# GPU is read from nvidia-smi, then AMD sysfs; it is hidden when neither is present.
+# system_monitor = false
+# system_monitor_interval_ms = 2000
+
+# Use the terminal's default background for all Herdr chrome, so a transparent
+# terminal window shows through. Enable your terminal's opacity to see the effect.
+# transparent_background = false
+
 # Accent color for highlights, borders, and navigation UI.
 # Accepts: hex (#89b4fa), named colors (cyan, blue, magenta), or rgb(r,g,b)
 # accent = "cyan"

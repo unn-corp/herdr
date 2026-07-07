@@ -44,6 +44,9 @@ pub struct WorkspaceGitStatus {
     pub resolved_identity_cwd: PathBuf,
     pub branch: Option<String>,
     pub ahead_behind: Option<(usize, usize)>,
+    /// Count of uncommitted changes (staged, unstaged, untracked), or `None`
+    /// when the directory is not a git repo or the status could not be read.
+    pub dirty: Option<usize>,
     pub space: Option<GitSpaceMetadata>,
 }
 
@@ -51,7 +54,16 @@ pub struct WorkspaceGitStatus {
 pub struct WorkspaceGitStatusSnapshot {
     pub branch: Option<String>,
     pub ahead_behind: Option<(usize, usize)>,
+    pub dirty: Option<usize>,
     pub space: Option<GitSpaceMetadata>,
+}
+
+/// Git branch + uncommitted count for a single pane's working directory. Used to
+/// show per-conversation git status in the monitor strip and agent sidebar.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct PaneGitStatus {
+    pub branch: Option<String>,
+    pub dirty: Option<usize>,
 }
 
 impl WorkspaceGitStatusSnapshot {
@@ -65,6 +77,7 @@ impl WorkspaceGitStatusSnapshot {
             resolved_identity_cwd,
             branch: self.branch,
             ahead_behind: self.ahead_behind,
+            dirty: self.dirty,
             space: self.space,
         }
     }
@@ -153,10 +166,15 @@ pub struct Workspace {
     pub(crate) cached_git_branch: Option<String>,
     /// Cached ahead/behind counts for the workspace repo's current branch upstream.
     pub(crate) cached_git_ahead_behind: Option<(usize, usize)>,
+    /// Cached count of uncommitted changes in the workspace repo.
+    pub(crate) cached_git_dirty: Option<usize>,
     /// Cached derived Git repo metadata for worktree actions and status display.
     pub(crate) cached_git_space: Option<GitSpaceMetadata>,
     /// Explicit Herdr-managed worktree grouping provenance.
     pub worktree_space: Option<WorktreeSpaceMembership>,
+    /// User-set default cwd for new tabs/panes in this workspace. Raw path
+    /// expression (may contain `~`); `None` inherits the global cwd policy.
+    pub default_cwd: Option<String>,
     /// Public pane numbers within this workspace. Closed pane numbers are not reused.
     pub public_pane_numbers: HashMap<PaneId, usize>,
     pub(crate) next_public_pane_number: usize,
@@ -184,6 +202,11 @@ impl DerefMut for Workspace {
 }
 
 impl Workspace {
+    /// Set (or clear with `None`) the workspace's default cwd for new tabs/panes.
+    pub(crate) fn set_default_cwd(&mut self, cwd: Option<String>) {
+        self.default_cwd = cwd;
+    }
+
     fn adjust_active_tab_after_removal(&mut self, removed_idx: usize) {
         if self.tabs.is_empty() {
             self.active_tab = 0;
@@ -214,8 +237,10 @@ impl Workspace {
             identity_cwd: identity_cwd.clone(),
             cached_git_branch: git_branch(&identity_cwd),
             cached_git_ahead_behind: None,
+            cached_git_dirty: None,
             cached_git_space: git_space_metadata(&identity_cwd),
             worktree_space: None,
+            default_cwd: None,
             public_pane_numbers,
             next_public_pane_number: 2,
             next_public_tab_number: 2,
@@ -395,8 +420,10 @@ impl Workspace {
                 identity_cwd: initial_cwd.clone(),
                 cached_git_branch: git_branch(&initial_cwd),
                 cached_git_ahead_behind: None,
+                cached_git_dirty: None,
                 cached_git_space: None,
                 worktree_space: None,
+                default_cwd: None,
                 public_pane_numbers,
                 next_public_pane_number: 2,
                 next_public_tab_number: 2,
@@ -1073,6 +1100,9 @@ impl Workspace {
         self.cached_git_branch.clone()
     }
 
+    // Still exercised by the git-refresh tests; the ahead/behind counts are no
+    // longer surfaced in the sidebar now that branch/status is per-conversation.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn git_ahead_behind(&self) -> Option<(usize, usize)> {
         self.cached_git_ahead_behind
     }
@@ -1206,8 +1236,10 @@ impl Workspace {
             identity_cwd: identity_cwd.clone(),
             cached_git_branch: git_branch(&identity_cwd),
             cached_git_ahead_behind: None,
+            cached_git_dirty: None,
             cached_git_space: None,
             worktree_space: None,
+            default_cwd: None,
             public_pane_numbers,
             next_public_pane_number: 2,
             next_public_tab_number: 2,
@@ -1432,6 +1464,16 @@ impl Workspace {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_cwd_defaults_none_and_is_settable() {
+        let mut ws = Workspace::test_new("ws");
+        assert_eq!(ws.default_cwd, None);
+        ws.set_default_cwd(Some("~/proj".to_string()));
+        assert_eq!(ws.default_cwd.as_deref(), Some("~/proj"));
+        ws.set_default_cwd(None);
+        assert_eq!(ws.default_cwd, None);
+    }
 
     #[test]
     fn generated_workspace_ids_are_short_base32_handles() {

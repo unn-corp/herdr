@@ -515,6 +515,10 @@ impl HeadlessServer {
             self.stream_host_mouse_capture_mode();
 
             self.app.sync_headless_animation_timer(now);
+            if self.app.sync_system_monitor(now) {
+                needs_render = true;
+                needs_full_render = true;
+            }
 
             // 7. Render virtually and stream frames.
             if needs_render && self.app.can_render_now(now) {

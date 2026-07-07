@@ -780,6 +780,7 @@ fn state_label_text(state: AgentState, seen: bool) -> &'static str {
     match (state, seen) {
         (AgentState::Blocked, _) => "blocked",
         (AgentState::Working, _) => "working",
+        (AgentState::Waiting, _) => "waiting",
         (AgentState::Idle, false) => "done",
         (AgentState::Idle, true) => "idle",
         (AgentState::Unknown, _) => "unknown",
@@ -809,8 +810,9 @@ fn tab_aggregate_state(
 
 fn state_priority(state: AgentState, seen: bool) -> u8 {
     match (state, seen) {
-        (AgentState::Blocked, _) => 5,
-        (AgentState::Working, _) => 4,
+        (AgentState::Blocked, _) => 6,
+        (AgentState::Working, _) => 5,
+        (AgentState::Waiting, _) => 4,
         (AgentState::Idle, false) => 3,
         (AgentState::Idle, true) => 2,
         (AgentState::Unknown, _) => 1,
@@ -2339,6 +2341,10 @@ impl AppState {
                 ws.cached_git_ahead_behind = result.ahead_behind;
                 changed = true;
             }
+            if ws.cached_git_dirty != result.dirty {
+                ws.cached_git_dirty = result.dirty;
+                changed = true;
+            }
             if ws.cached_git_space != result.space {
                 ws.cached_git_space = result.space;
                 changed = true;
@@ -2567,9 +2573,11 @@ impl AppState {
             AppEvent::GitStatusRefreshed {
                 results,
                 cache_updates,
+                pane_statuses,
             } => {
                 let _ = results;
                 let _ = cache_updates;
+                let _ = pane_statuses;
                 Vec::new()
             }
             AppEvent::WorktreeAddFinished(_) => Vec::new(),
@@ -3469,6 +3477,7 @@ mod tests {
                 resolved_identity_cwd: first_cwd,
                 branch: Some("main".into()),
                 ahead_behind: Some((2, 1)),
+                dirty: None,
                 space: None,
             }],
         );
@@ -3495,6 +3504,7 @@ mod tests {
                 resolved_identity_cwd: std::path::PathBuf::from("/definitely/not/current"),
                 branch: Some("main".into()),
                 ahead_behind: Some((0, 1)),
+                dirty: None,
                 space: None,
             }],
         );
@@ -3520,6 +3530,7 @@ mod tests {
                 resolved_identity_cwd: cwd,
                 branch: None,
                 ahead_behind: None,
+                dirty: None,
                 space: None,
             }],
         );
@@ -3545,6 +3556,7 @@ mod tests {
                 resolved_identity_cwd: cwd,
                 branch: Some("scratch".into()),
                 ahead_behind: None,
+                dirty: None,
                 space: Some(crate::workspace::GitSpaceMetadata {
                     key: "other-repo-key".into(),
                     checkout_key: "/other/checkout".into(),

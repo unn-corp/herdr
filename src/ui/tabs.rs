@@ -6,7 +6,6 @@ use ratatui::{
 };
 
 use super::text::display_width_u16;
-use super::widgets::panel_contrast_fg;
 use crate::app::AppState;
 
 const MIN_TAB_WIDTH: u16 = 8;
@@ -322,19 +321,27 @@ pub(super) fn render_tab_bar(app: &AppState, frame: &mut Frame, area: Rect) {
         }
         let active = idx == ws.active_tab;
         let style = if active {
-            let base = Style::default().fg(panel_contrast_fg(p)).bg(p.accent);
+            // Active tab: bright, readable text with an accent underline and no
+            // filled pill (a bright accent fill glares, especially over a
+            // transparent background).
+            let base = Style::default()
+                .fg(p.text)
+                .add_modifier(Modifier::UNDERLINED)
+                .underline_color(p.accent);
             if tab.is_auto_named() {
                 base
             } else {
                 base.add_modifier(Modifier::BOLD)
             }
         } else if tab.is_auto_named() {
+            // Brighter than overlay0 so inactive tab labels stay legible when a
+            // transparent background removes the surface fill behind them.
             Style::default()
-                .fg(p.overlay0)
+                .fg(p.overlay1)
                 .bg(p.surface0)
                 .add_modifier(Modifier::DIM)
         } else {
-            Style::default().fg(p.overlay1).bg(p.surface0)
+            Style::default().fg(p.subtext0).bg(p.surface0)
         };
         let width = rect.width as usize;
         let name = tab_chrome_label(ws, idx);
@@ -458,7 +465,10 @@ mod tests {
         let tab_rect = app.view.tab_hit_areas[0];
         let style = terminal.backend().buffer()[(tab_rect.x + 1, tab_rect.y)].style();
 
-        assert_eq!(style.bg, Some(app.palette.accent));
+        // Active auto-named tab: bright underlined text, no fill, not dimmed.
+        assert_ne!(style.bg, Some(app.palette.accent));
+        assert_eq!(style.fg, Some(app.palette.text));
+        assert!(style.add_modifier.contains(Modifier::UNDERLINED));
         assert!(!style.add_modifier.contains(Modifier::DIM));
         assert!(!style.add_modifier.contains(Modifier::BOLD));
     }

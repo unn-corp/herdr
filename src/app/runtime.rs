@@ -19,6 +19,12 @@ pub(crate) struct WorkspaceGitRefreshItem {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct PaneGitRefreshItem {
+    pub(crate) pane_id: crate::layout::PaneId,
+    pub(crate) cache_key: std::path::PathBuf,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct WorkspaceGitRefreshTarget {
     pub(crate) workspace_id: String,
     pub(crate) resolved_identity_cwd: std::path::PathBuf,
@@ -353,6 +359,86 @@ impl App {
         }
     }
 
+    /// Refresh the system monitor strip if due, and fold in any completed async
+    /// GPU read. Returns whether the displayed sample changed (render needed).
+    pub(crate) fn sync_system_monitor(&mut self, now: Instant) -> bool {
+        if !self.state.system_monitor_enabled {
+            self.system_monitor.next_tick = None;
+            return false;
+        }
+
+        // Fold the latest async GPU result into the current sample even between
+        // full samples, so the GPU segment appears as soon as the read finishes.
+        let mut changed = false;
+        if let Some(sample) = self.state.system_monitor.as_mut() {
+            if let Ok(gpu) = self.system_monitor.gpu_latest.lock() {
+                if sample.gpu != *gpu {
+                    sample.gpu = *gpu;
+                    changed = true;
+                }
+            }
+        }
+
+        let due = self.system_monitor.next_tick.is_none_or(|tick| now >= tick);
+        if !due {
+            return changed;
+        }
+        self.system_monitor.next_tick = Some(now + self.system_monitor.interval);
+
+        let cpu_now = crate::platform::read_cpu_snapshot();
+        let cpu_pct = match (self.system_monitor.cpu_prev, cpu_now) {
+            (Some(prev), Some(cur)) => crate::platform::cpu_pct_from_delta(prev, cur),
+            _ => None,
+        };
+        self.system_monitor.cpu_prev = cpu_now;
+        let ram_pct = crate::platform::read_ram_pct();
+        let gpu = self
+            .system_monitor
+            .gpu_latest
+            .lock()
+            .ok()
+            .and_then(|guard| *guard);
+
+        self.state.system_monitor = Some(crate::platform::SystemSample {
+            cpu_pct,
+            ram_pct,
+            gpu,
+        });
+        self.spawn_gpu_read();
+        true
+    }
+
+    /// Spawn an off-loop GPU read (`nvidia-smi` / AMD sysfs) that stores its
+    /// result and wakes the loop. No-op when GPU metrics are unsupported or a
+    /// read is already in flight, so per-tick spawns never stack up.
+    fn spawn_gpu_read(&self) {
+        use std::sync::atomic::Ordering;
+
+        if !self.system_monitor.gpu_supported {
+            return;
+        }
+        if self
+            .system_monitor
+            .gpu_inflight
+            .swap(true, Ordering::AcqRel)
+        {
+            return;
+        }
+        let latest = self.system_monitor.gpu_latest.clone();
+        let inflight = self.system_monitor.gpu_inflight.clone();
+        let render_notify = self.render_notify.clone();
+        let render_dirty = self.render_dirty.clone();
+        tokio::task::spawn_blocking(move || {
+            let sample = crate::platform::read_gpu_sample();
+            if let Ok(mut guard) = latest.lock() {
+                *guard = sample;
+            }
+            inflight.store(false, Ordering::Release);
+            render_dirty.store(true, Ordering::Release);
+            render_notify.notify_one();
+        });
+    }
+
     fn agent_panel_has_animation(&self) -> bool {
         self.state
             .workspaces
@@ -493,14 +579,17 @@ impl App {
             return;
         }
 
+        let panes = self.pane_git_refresh_items();
         self.git_refresh_in_flight = true;
         let event_tx = self.event_tx.clone();
         let cache = self.git_status_cache.clone();
         std::thread::spawn(move || {
             let output = refresh_workspace_git_statuses_with_cache(workspaces, &cache);
+            let pane_statuses = refresh_pane_git_statuses(panes, &cache);
             let _ = event_tx.blocking_send(AppEvent::GitStatusRefreshed {
                 results: output.results,
                 cache_updates: output.cache_updates,
+                pane_statuses,
             });
         });
     }
@@ -556,6 +645,7 @@ impl App {
             self.state.next_pending_agent_notification_deadline(),
             self.copy_feedback_deadline,
             self.next_animation_tick,
+            self.system_monitor.next_tick,
             include_git_refresh
                 .then(|| self.git_refresh_deadline())
                 .flatten(),
@@ -589,6 +679,26 @@ impl App {
                 })
             })
             .collect()
+    }
+
+    /// One item per pane, resolving each pane's working directory to its git repo
+    /// so the strip and sidebar can show per-conversation branches.
+    fn pane_git_refresh_items(&self) -> Vec<PaneGitRefreshItem> {
+        let mut items = Vec::new();
+        for ws in &self.state.workspaces {
+            for tab in &ws.tabs {
+                for &pane_id in tab.panes.keys() {
+                    let Some(cwd) =
+                        tab.cwd_for_pane(pane_id, &self.state.terminals, &self.terminal_runtimes)
+                    else {
+                        continue;
+                    };
+                    let cache_key = crate::workspace::git_status_cache_key(&cwd).unwrap_or(cwd);
+                    items.push(PaneGitRefreshItem { pane_id, cache_key });
+                }
+            }
+        }
+        items
     }
 
     pub(crate) fn drain_internal_events(&mut self) -> bool {
@@ -645,6 +755,34 @@ pub(crate) fn deduplicate_git_refresh_items(
     }
 
     jobs
+}
+
+/// Resolve per-pane git (branch + uncommitted count), keyed by pane. Repos are
+/// computed once per distinct repo root and shared across panes in the same repo.
+pub(crate) fn refresh_pane_git_statuses(
+    panes: Vec<PaneGitRefreshItem>,
+    cache: &HashMap<std::path::PathBuf, GitStatusCacheEntry>,
+) -> Vec<(crate::layout::PaneId, crate::workspace::PaneGitStatus)> {
+    let mut by_key: HashMap<std::path::PathBuf, crate::workspace::PaneGitStatus> = HashMap::new();
+    panes
+        .into_iter()
+        .map(|item| {
+            let status = by_key
+                .entry(item.cache_key.clone())
+                .or_insert_with(|| {
+                    let (snapshot, _) = Workspace::git_status_snapshot_for_cwd_with_cache(
+                        &item.cache_key,
+                        cache.get(&item.cache_key),
+                    );
+                    crate::workspace::PaneGitStatus {
+                        branch: snapshot.branch,
+                        dirty: snapshot.dirty,
+                    }
+                })
+                .clone();
+            (item.pane_id, status)
+        })
+        .collect()
 }
 
 pub(crate) fn refresh_workspace_git_statuses_with_cache(
@@ -815,6 +953,7 @@ mod tests {
         app.handle_internal_event(crate::events::AppEvent::GitStatusRefreshed {
             results: Vec::new(),
             cache_updates: Vec::new(),
+            pane_statuses: Vec::new(),
         });
 
         assert!(!app.git_refresh_in_flight);

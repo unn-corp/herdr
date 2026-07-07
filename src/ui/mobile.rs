@@ -957,16 +957,17 @@ struct GlobalAgentCounts {
     blocked: usize,
     done: usize,
     working: usize,
+    waiting: usize,
     idle: usize,
 }
 
 impl GlobalAgentCounts {
     fn total(&self) -> usize {
-        self.blocked + self.done + self.working + self.idle
+        self.blocked + self.done + self.working + self.waiting + self.idle
     }
 
     fn any_pending(&self) -> bool {
-        self.blocked > 0 || self.done > 0 || self.working > 0
+        self.blocked > 0 || self.done > 0 || self.working > 0 || self.waiting > 0
     }
 }
 
@@ -977,6 +978,7 @@ fn global_agent_counts(app: &AppState) -> GlobalAgentCounts {
             (AgentState::Blocked, _) => counts.blocked += 1,
             (AgentState::Idle, false) => counts.done += 1,
             (AgentState::Working, _) => counts.working += 1,
+            (AgentState::Waiting, _) => counts.waiting += 1,
             (AgentState::Idle, true) => counts.idle += 1,
             (AgentState::Unknown, _) => {}
         }
@@ -989,6 +991,7 @@ enum SummaryTone {
     Blocked,
     Done,
     Working,
+    Waiting,
     Idle,
     Muted,
 }
@@ -1014,6 +1017,9 @@ fn agent_summary_segments(counts: GlobalAgentCounts) -> Vec<(String, SummaryTone
     }
     if counts.working > 0 {
         segments.push((format!("{} working", counts.working), SummaryTone::Working));
+    }
+    if counts.waiting > 0 {
+        segments.push((format!("{} waiting", counts.waiting), SummaryTone::Waiting));
     }
     if counts.idle > 0 {
         segments.push((format!("{} idle", counts.idle), SummaryTone::Idle));
@@ -1065,6 +1071,7 @@ fn agent_summary_line(app: &AppState, p: &Palette, max_width: u16) -> Line<'stat
                 SummaryTone::Blocked => p.red,
                 SummaryTone::Done => p.blue,
                 SummaryTone::Working => p.yellow,
+                SummaryTone::Waiting => p.teal,
                 SummaryTone::Idle | SummaryTone::Muted => p.overlay1,
             };
             let style = Style::default().fg(color).bg(p.panel_bg);
@@ -1155,6 +1162,7 @@ mod tests {
             blocked: 2,
             done: 1,
             working: 2,
+            waiting: 0,
             idle: 1,
         };
         let segments = agent_summary_segments(counts);
@@ -1201,6 +1209,7 @@ mod tests {
             blocked: 2,
             done: 1,
             working: 2,
+            waiting: 0,
             idle: 1,
         };
         let (shown, truncated) = fit_summary_segments(agent_summary_segments(counts), 24);
@@ -1215,6 +1224,7 @@ mod tests {
             blocked: 2,
             done: 1,
             working: 2,
+            waiting: 0,
             idle: 1,
         };
         let (shown, truncated) = fit_summary_segments(agent_summary_segments(counts), 60);
