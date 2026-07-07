@@ -1426,6 +1426,7 @@ impl App {
                     config.ui.show_agent_labels_on_pane_borders;
                 self.state.hide_tab_bar_when_single_tab = config.ui.hide_tab_bar_when_single_tab;
                 self.state.system_monitor_enabled = config.ui.system_monitor;
+                self.state.context_usage = config.ui.context_usage.clone();
                 self.system_monitor.interval =
                     Duration::from_millis(config.ui.system_monitor_interval_ms.max(200));
                 self.system_monitor.next_tick = config.ui.system_monitor.then(Instant::now);
@@ -2623,6 +2624,38 @@ mod tests {
         assert_eq!(toast.kind, crate::app::state::ToastKind::UpdateInstalled);
         assert_eq!(toast.title, "reloaded config");
         assert_eq!(toast.context, "using config.toml");
+
+        std::env::remove_var(crate::config::CONFIG_PATH_ENV_VAR);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn reload_config_updates_context_usage() {
+        let _guard = config_env_lock().lock().unwrap();
+        let path = temp_config_path("reload-config-context-usage");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            "[ui.context_usage]\nbar_width = 14\n[ui.context_usage.native]\nhermes = \"prefer-herdr\"\n",
+        )
+        .unwrap();
+        std::env::set_var(crate::config::CONFIG_PATH_ENV_VAR, &path);
+
+        let mut app = test_app();
+        // Defaults before reload.
+        assert_eq!(app.state.context_usage.bar_width, 8);
+        assert_eq!(
+            app.state.context_usage.native.hermes,
+            crate::config::NativePreference::PreferNative
+        );
+
+        let report = app.reload_config();
+        assert_eq!(report.status, crate::config::ConfigReloadStatus::Applied);
+        assert_eq!(app.state.context_usage.bar_width, 14);
+        assert_eq!(
+            app.state.context_usage.native.hermes,
+            crate::config::NativePreference::PreferHerdr
+        );
 
         std::env::remove_var(crate::config::CONFIG_PATH_ENV_VAR);
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
