@@ -8,10 +8,10 @@ use crate::api::schema::{
     PaneMoveParams, PaneMoveReason, PaneMoveResult, PaneNeighborParams, PaneNeighborResult,
     PaneProcessInfo, PaneProcessInfoParams, PaneProcessInfoProcess, PaneReadParams, PaneReadResult,
     PaneReleaseAgentParams, PaneRenameParams, PaneReportAgentParams, PaneReportAgentSessionParams,
-    PaneReportMetadataParams, PaneResizeParams, PaneResizeReason, PaneResizeResult,
-    PaneSendInputParams, PaneSendKeysParams, PaneSendTextParams, PaneSplitParams, PaneSwapParams,
-    PaneSwapReason, PaneSwapResult, PaneTarget, PaneZoomMode, PaneZoomParams, PaneZoomReason,
-    PaneZoomResult, ReadFormat, ReadSource, ResponseResult,
+    PaneReportMetadataParams, PaneReportUsageParams, PaneResizeParams, PaneResizeReason,
+    PaneResizeResult, PaneSendInputParams, PaneSendKeysParams, PaneSendTextParams, PaneSplitParams,
+    PaneSwapParams, PaneSwapReason, PaneSwapResult, PaneTarget, PaneZoomMode, PaneZoomParams,
+    PaneZoomReason, PaneZoomResult, ReadFormat, ReadSource, ResponseResult,
 };
 use crate::app::actions::{PaneZoomCommand, PaneZoomNoopReason};
 use crate::app::{App, Mode};
@@ -1365,6 +1365,62 @@ impl App {
         encode_success(id, ResponseResult::Ok {})
     }
 
+    pub(super) fn handle_pane_report_usage(
+        &mut self,
+        id: String,
+        params: PaneReportUsageParams,
+    ) -> String {
+        let Some((_ws_idx, pane_id)) = self.parse_pane_id(&params.pane_id) else {
+            return pane_not_found(id, &params.pane_id);
+        };
+        let source = match normalize_metadata_source(params.source) {
+            Ok(source) => source,
+            Err(message) => return encode_error(id, "invalid_usage_source", message),
+        };
+        let ttl = match normalize_metadata_ttl(params.ttl_ms) {
+            Ok(ttl) => ttl,
+            Err(message) => return encode_error(id, "invalid_usage_ttl", message),
+        };
+        if params.used_pct.is_some_and(|pct| pct > 100) {
+            return encode_error(
+                id,
+                "invalid_usage_pct",
+                "used_pct must be between 0 and 100".to_string(),
+            );
+        }
+        let confidence = match normalize_usage_confidence(params.confidence) {
+            Ok(confidence) => confidence,
+            Err(message) => return encode_error(id, "invalid_usage_confidence", message),
+        };
+
+        let usage = if params.clear {
+            None
+        } else {
+            Some(Box::new(crate::api::schema::PaneUsageInfo {
+                source: source.clone(),
+                agent: normalize_presentation_text(params.agent),
+                model: normalize_presentation_text(params.model),
+                used_pct: params.used_pct,
+                used_tokens: params.used_tokens,
+                context_window_tokens: params.context_window_tokens,
+                remaining_tokens: params.remaining_tokens,
+                reset_at_unix: params.reset_at_unix,
+                window_kind: normalize_presentation_text(params.window_kind),
+                confidence,
+            }))
+        };
+
+        self.handle_internal_event(crate::events::AppEvent::HookUsageReported {
+            pane_id,
+            source,
+            usage,
+            seq: params.seq,
+            ttl,
+        });
+
+        encode_success(id, ResponseResult::Ok {})
+    }
+
     pub(super) fn handle_pane_clear_agent_authority(
         &mut self,
         id: String,
@@ -1567,6 +1623,22 @@ fn normalize_metadata_source(value: String) -> Result<String, &'static str> {
 
 fn metadata_source_char_is_valid(ch: char) -> bool {
     ch.is_ascii_alphanumeric() || matches!(ch, ':' | '.' | '_' | '-')
+}
+
+/// Validate an optional usage confidence label. Empty maps to `None`; unknown
+/// values are rejected so a typo can never masquerade as a confidence level.
+fn normalize_usage_confidence(value: Option<String>) -> Result<Option<String>, &'static str> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let value = value.trim();
+    if value.is_empty() {
+        return Ok(None);
+    }
+    match value {
+        "official" | "estimated" | "heuristic" | "unavailable" => Ok(Some(value.to_string())),
+        _ => Err("confidence must be one of: official, estimated, heuristic, unavailable"),
+    }
 }
 
 fn normalize_metadata_ttl(

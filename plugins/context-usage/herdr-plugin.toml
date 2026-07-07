@@ -1,0 +1,41 @@
+id = "arcwright.context-usage"
+name = "Context Usage"
+version = "0.1.0"
+min_herdr_version = "0.7.1"
+description = "Collects AI agent context-window and reset usage for Herdr panes."
+platforms = ["linux", "macos"]
+
+# Build the collector binary from source. Herdr runs plugin commands from the
+# plugin root, so downstream commands reference the release binary path.
+[[build]]
+command = ["cargo", "build", "--release"]
+
+[[actions]]
+id = "doctor"
+title = "Context Usage: Doctor"
+contexts = ["global"]
+command = ["target/release/herdr-context-usage", "doctor"]
+
+[[actions]]
+id = "install-collectors"
+title = "Context Usage: Install Collectors"
+contexts = ["global"]
+command = ["target/release/herdr-context-usage", "install"]
+
+[[actions]]
+id = "uninstall-collectors"
+title = "Context Usage: Uninstall Collectors"
+contexts = ["global"]
+command = ["target/release/herdr-context-usage", "uninstall"]
+
+[[actions]]
+id = "show-focused-pane"
+title = "Context Usage: Show Focused Pane"
+contexts = ["pane"]
+command = ["target/release/herdr-context-usage", "show"]
+
+[[panes]]
+id = "usage"
+title = "Context Usage"
+placement = "sidebar"
+command = ["target/release/herdr-context-usage", "watch"]

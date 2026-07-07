@@ -3,9 +3,9 @@ use crate::api::schema::{
     PaneLayoutParams, PaneListParams, PaneMoveDestination, PaneMoveParams, PaneNeighborParams,
     PaneProcessInfoParams, PaneReadParams, PaneReleaseAgentParams, PaneRenameParams,
     PaneReportAgentParams, PaneReportAgentSessionParams, PaneReportMetadataParams,
-    PaneResizeParams, PaneSendInputParams, PaneSendKeysParams, PaneSendTextParams, PaneSplitParams,
-    PaneSwapParams, PaneTarget, PaneZoomMode, PaneZoomParams, ReadFormat, ReadSource, Request,
-    SplitDirection,
+    PaneReportUsageParams, PaneResizeParams, PaneSendInputParams, PaneSendKeysParams,
+    PaneSendTextParams, PaneSplitParams, PaneSwapParams, PaneTarget, PaneZoomMode, PaneZoomParams,
+    ReadFormat, ReadSource, Request, SplitDirection,
 };
 
 pub(super) fn run_pane_command(args: &[String]) -> std::io::Result<i32> {
@@ -37,6 +37,7 @@ pub(super) fn run_pane_command(args: &[String]) -> std::io::Result<i32> {
         "report-agent-session" => pane_report_agent_session(&args[1..]),
         "release-agent" => pane_release_agent(&args[1..]),
         "report-metadata" => pane_report_metadata(&args[1..]),
+        "report-usage" => pane_report_usage(&args[1..]),
         "run" => pane_run(&args[1..]),
         "help" | "--help" | "-h" => {
             print_pane_help();
@@ -1406,6 +1407,105 @@ fn pane_report_metadata(args: &[String]) -> std::io::Result<i32> {
     }))
 }
 
+fn pane_report_usage(args: &[String]) -> std::io::Result<i32> {
+    let Some(raw_pane_id) = args.first() else {
+        eprintln!("usage: herdr pane report-usage <pane_id> --source ID [--agent LABEL] [--model ID] [--used-pct N] [--used-tokens N] [--context-window-tokens N] [--remaining-tokens N] [--reset-at-unix N] [--window-kind KIND] [--confidence LEVEL] [--clear] [--seq N] [--ttl-ms N]");
+        return Ok(2);
+    };
+
+    let pane_id = super::normalize_pane_id(raw_pane_id);
+    let mut source = None;
+    let mut agent = None;
+    let mut model = None;
+    let mut used_pct = None;
+    let mut used_tokens = None;
+    let mut context_window_tokens = None;
+    let mut remaining_tokens = None;
+    let mut reset_at_unix = None;
+    let mut window_kind = None;
+    let mut confidence = None;
+    let mut clear = false;
+    let mut seq = None;
+    let mut ttl_ms = None;
+
+    let mut index = 1;
+    while index < args.len() {
+        let flag = args[index].as_str();
+        // `--clear` is the only value-less flag; everything else consumes a value.
+        if flag == "--clear" {
+            clear = true;
+            index += 1;
+            continue;
+        }
+        let Some(value) = args.get(index + 1) else {
+            eprintln!("missing value for {flag}");
+            return Ok(2);
+        };
+        match flag {
+            "--source" => source = Some(value.clone()),
+            "--agent" => agent = Some(value.clone()),
+            "--model" => model = Some(value.clone()),
+            "--used-pct" => {
+                let pct = super::parse_u64_flag("--used-pct", value)?;
+                if pct > 100 {
+                    eprintln!("--used-pct must be between 0 and 100");
+                    return Ok(2);
+                }
+                used_pct = Some(pct as u8);
+            }
+            "--used-tokens" => used_tokens = Some(super::parse_u64_flag("--used-tokens", value)?),
+            "--context-window-tokens" => {
+                context_window_tokens =
+                    Some(super::parse_u64_flag("--context-window-tokens", value)?)
+            }
+            "--remaining-tokens" => {
+                remaining_tokens = Some(super::parse_u64_flag("--remaining-tokens", value)?)
+            }
+            "--reset-at-unix" => {
+                let Ok(parsed) = value.parse::<i64>() else {
+                    eprintln!("--reset-at-unix must be an integer");
+                    return Ok(2);
+                };
+                reset_at_unix = Some(parsed);
+            }
+            "--window-kind" => window_kind = Some(value.clone()),
+            "--confidence" => confidence = Some(value.clone()),
+            "--seq" => seq = Some(super::parse_u64_flag("--seq", value)?),
+            "--ttl-ms" => ttl_ms = Some(super::parse_u64_flag("--ttl-ms", value)?),
+            other => {
+                eprintln!("unknown option: {other}");
+                return Ok(2);
+            }
+        }
+        index += 2;
+    }
+
+    let Some(source) = source.and_then(|source| {
+        let source = source.trim().to_string();
+        (!source.is_empty()).then_some(source)
+    }) else {
+        eprintln!("missing required --source");
+        return Ok(2);
+    };
+
+    super::send_ok_request(Method::PaneReportUsage(PaneReportUsageParams {
+        pane_id,
+        source,
+        agent,
+        model,
+        used_pct,
+        used_tokens,
+        context_window_tokens,
+        remaining_tokens,
+        reset_at_unix,
+        window_kind,
+        confidence,
+        clear,
+        seq,
+        ttl_ms,
+    }))
+}
+
 fn print_pane_help() {
     eprintln!("herdr pane commands:");
     eprintln!("  herdr pane list [--workspace <workspace_id>]");
@@ -1437,6 +1537,7 @@ fn print_pane_help() {
     eprintln!("  herdr pane report-agent-session <pane_id> --source ID --agent LABEL [--seq N] [--agent-session-id ID] [--agent-session-path PATH]");
     eprintln!("  herdr pane release-agent <pane_id> --source ID --agent LABEL [--seq N]");
     eprintln!("  herdr pane report-metadata <pane_id> --source ID [--agent LABEL] [--applies-to-source ID] [--title TEXT|--clear-title] [--display-agent TEXT|--clear-display-agent] [--custom-status TEXT|--clear-custom-status] [--state-label STATUS=TEXT] [--clear-state-labels] [--seq N] [--ttl-ms N]");
+    eprintln!("  herdr pane report-usage <pane_id> --source ID [--agent LABEL] [--model ID] [--used-pct N] [--used-tokens N] [--context-window-tokens N] [--remaining-tokens N] [--reset-at-unix N] [--window-kind KIND] [--confidence LEVEL] [--clear] [--seq N] [--ttl-ms N]");
     eprintln!("  herdr pane run <pane_id> <command>");
 }
 

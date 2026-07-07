@@ -6,6 +6,7 @@ test:
     python3 -m unittest scripts.test_agent_detection_manifest_check scripts.test_changelog scripts.test_preview scripts.test_vendor_libghostty_vt scripts.test_vendor_portable_pty
     just integration-assets-test
     just plugin-marketplace-test
+    just context-usage-test
 
 # Run one nextest filter, e.g. `just test-one codex_stale_working`
 test-one filter:
@@ -21,6 +22,7 @@ ci filter='all()': lint
     cargo nextest run --locked -E "{{filter}}" --status-level fail --final-status-level slow --failure-output final --success-output never
     just integration-assets-test
     just plugin-marketplace-test
+    just context-usage-test
 
 # Run Windows target lint from Unix/macOS to catch cfg(windows) compile and clippy failures before CI
 windows-lint:
@@ -54,6 +56,10 @@ integration-assets-test:
 # Run plugin marketplace Worker tests
 plugin-marketplace-test:
     cd workers/plugin-marketplace && bun test
+
+# Run the context-usage plugin crate tests (standalone crate, not in the workspace)
+context-usage-test:
+    cd plugins/context-usage && cargo test --locked --quiet
 
 # Build the vendored libghostty-vt source dist
 build-libghostty-vt:

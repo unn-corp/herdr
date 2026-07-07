@@ -321,6 +321,67 @@ pub struct PaneReportMetadataParams {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PaneReportUsageParams {
+    pub pane_id: String,
+    pub source: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// Percent of the window consumed, 0..=100.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub used_pct: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub used_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_window_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remaining_tokens: Option<u64>,
+    /// Unix seconds at which the window resets; set only from a machine-readable
+    /// provider signal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reset_at_unix: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_kind: Option<String>,
+    /// One of `official`, `estimated`, `heuristic`, `unavailable`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<String>,
+    /// Clear any usage recorded for this pane instead of setting it.
+    #[serde(default)]
+    pub clear: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seq: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ttl_ms: Option<u64>,
+}
+
+/// Display-relevant context-window usage surfaced on a pane. Every numeric
+/// field is optional: a collector reports only what a provider exposes, and
+/// readers must treat a missing value as unknown, not zero.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PaneUsageInfo {
+    pub source: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub used_pct: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub used_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_window_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remaining_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reset_at_unix: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PaneClearAgentAuthorityParams {
     pub pane_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -364,6 +425,9 @@ pub struct PaneInfo {
     pub state_labels: HashMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_session: Option<AgentSessionInfo>,
+    /// Latest reported context-window usage, if any and not expired.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage: Option<PaneUsageInfo>,
     pub revision: u64,
 }
 

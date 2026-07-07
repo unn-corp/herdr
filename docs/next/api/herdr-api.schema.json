@@ -764,6 +764,17 @@
                 "null"
               ]
             },
+            "usage": {
+              "anyOf": [
+                {
+                  "$ref": "#/schemas/event/$defs/PaneUsageInfo"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Latest reported context-window usage, if any and not expired."
+            },
             "workspace_id": {
               "type": "string"
             }
@@ -895,6 +906,82 @@
             "direction",
             "ratio",
             "rect"
+          ],
+          "type": "object"
+        },
+        "PaneUsageInfo": {
+          "description": "Display-relevant context-window usage surfaced on a pane. Every numeric\nfield is optional: a collector reports only what a provider exposes, and\nreaders must treat a missing value as unknown, not zero.",
+          "properties": {
+            "agent": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "confidence": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "context_window_tokens": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "model": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "remaining_tokens": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "reset_at_unix": {
+              "format": "int64",
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "source": {
+              "type": "string"
+            },
+            "used_pct": {
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "used_tokens": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "window_kind": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "source"
           ],
           "type": "object"
         },
@@ -2391,6 +2478,109 @@
               "minimum": 0,
               "type": [
                 "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "pane_id",
+            "source"
+          ],
+          "type": "object"
+        },
+        "PaneReportUsageParams": {
+          "properties": {
+            "agent": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "clear": {
+              "default": false,
+              "description": "Clear any usage recorded for this pane instead of setting it.",
+              "type": "boolean"
+            },
+            "confidence": {
+              "description": "One of `official`, `estimated`, `heuristic`, `unavailable`.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "context_window_tokens": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "model": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "pane_id": {
+              "type": "string"
+            },
+            "remaining_tokens": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "reset_at_unix": {
+              "description": "Unix seconds at which the window resets; set only from a machine-readable\nprovider signal.",
+              "format": "int64",
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "seq": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "source": {
+              "type": "string"
+            },
+            "ttl_ms": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "used_pct": {
+              "description": "Percent of the window consumed, 0..=100.",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "used_tokens": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "window_kind": {
+              "type": [
+                "string",
                 "null"
               ]
             }
@@ -4696,6 +4886,22 @@
         {
           "properties": {
             "method": {
+              "const": "pane.report_usage",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/PaneReportUsageParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
               "const": "pane.clear_agent_authority",
               "type": "string"
             },
@@ -6434,6 +6640,17 @@
                 "null"
               ]
             },
+            "usage": {
+              "anyOf": [
+                {
+                  "$ref": "#/schemas/success_response/$defs/PaneUsageInfo"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Latest reported context-window usage, if any and not expired."
+            },
             "workspace_id": {
               "type": "string"
             }
@@ -6895,6 +7112,82 @@
             "source_pane_id",
             "focused_pane_id",
             "layout"
+          ],
+          "type": "object"
+        },
+        "PaneUsageInfo": {
+          "description": "Display-relevant context-window usage surfaced on a pane. Every numeric\nfield is optional: a collector reports only what a provider exposes, and\nreaders must treat a missing value as unknown, not zero.",
+          "properties": {
+            "agent": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "confidence": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "context_window_tokens": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "model": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "remaining_tokens": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "reset_at_unix": {
+              "format": "int64",
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "source": {
+              "type": "string"
+            },
+            "used_pct": {
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "used_tokens": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "window_kind": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "source"
           ],
           "type": "object"
         },

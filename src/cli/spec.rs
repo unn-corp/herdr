@@ -456,6 +456,7 @@ fn pane_command() -> Command {
         .subcommand(report_agent_session_command())
         .subcommand(release_agent_command())
         .subcommand(report_metadata_command())
+        .subcommand(report_usage_command())
 }
 
 fn report_agent_command() -> Command {
@@ -508,6 +509,25 @@ fn report_metadata_command() -> Command {
         .arg(flag("clear-custom-status"))
         .arg(option("state-label", "STATUS=TEXT"))
         .arg(flag("clear-state-labels"))
+        .arg(option("seq", "N"))
+        .arg(option("ttl-ms", "N"))
+}
+
+fn report_usage_command() -> Command {
+    Command::new("report-usage")
+        .about("Report context-window usage for a pane")
+        .arg(required("pane_id", "PANE_ID"))
+        .arg(option("source", "ID"))
+        .arg(option("agent", "LABEL"))
+        .arg(option("model", "ID"))
+        .arg(option("used-pct", "N"))
+        .arg(option("used-tokens", "N"))
+        .arg(option("context-window-tokens", "N"))
+        .arg(option("remaining-tokens", "N"))
+        .arg(option("reset-at-unix", "N"))
+        .arg(option("window-kind", "KIND"))
+        .arg(option("confidence", "LEVEL"))
+        .arg(flag("clear"))
         .arg(option("seq", "N"))
         .arg(option("ttl-ms", "N"))
 }

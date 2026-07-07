@@ -1,4 +1,6 @@
-use crate::config::{Keybinds, NewTerminalCwdConfig, SoundConfig, ToastConfig, ToastDelivery};
+use crate::config::{
+    ContextUsageConfig, Keybinds, NewTerminalCwdConfig, SoundConfig, ToastConfig, ToastDelivery,
+};
 use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::layout::{Direction, Rect};
 use ratatui::style::Color;
@@ -1328,6 +1330,16 @@ pub(crate) struct PaneFocusTarget {
 
 /// All application state — pure data, no channels or async runtime.
 /// Testable without PTYs or a tokio runtime.
+/// A pane's latest reported context usage plus its optional expiry deadline.
+/// Kept as pure data on [`AppState`]; expiry is evaluated lazily on read rather
+/// than swept, since usage is display-only and re-read every render.
+#[derive(Debug, Clone)]
+pub struct StoredPaneUsage {
+    pub info: crate::api::schema::PaneUsageInfo,
+    pub expires_at: Option<std::time::Instant>,
+    pub seq: Option<u64>,
+}
+
 pub struct AppState {
     pub terminals:
         std::collections::HashMap<crate::terminal::TerminalId, crate::terminal::TerminalState>,
@@ -1436,9 +1448,14 @@ pub struct AppState {
     pub system_monitor_enabled: bool,
     /// Latest CPU/RAM/GPU sample for the monitor strip, or `None` until first sampled.
     pub system_monitor: Option<crate::platform::SystemSample>,
+    /// Config for the per-pane context-usage segment of the monitor strip.
+    pub context_usage: ContextUsageConfig,
     /// Per-pane git branch + uncommitted count, keyed by pane. Refreshed in the
     /// background so the strip and agent sidebar can show per-conversation git.
     pub pane_git: std::collections::HashMap<PaneId, crate::workspace::PaneGitStatus>,
+    /// Per-pane context-window usage reported via `pane.report_usage`, keyed by
+    /// pane. Expired lazily at read time via [`AppState::effective_pane_usage`].
+    pub pane_usage: std::collections::HashMap<PaneId, StoredPaneUsage>,
     pub pane_history_persistence: bool,
     /// Expose the focused pane's cursor anchor to the outer terminal even when
     /// the pane requested `?25l`. See `[experimental] reveal_hidden_cursor_for_cjk_ime`.
@@ -1509,6 +1526,21 @@ pub struct AppState {
 impl AppState {
     pub(crate) fn mark_session_dirty(&mut self) {
         self.session_dirty = true;
+    }
+
+    /// The pane's reported context usage if present and not past its TTL at
+    /// `now`. Expiry is lazy: an expired entry reads as absent but is not
+    /// removed here (a later report overwrites it, or pane close clears it).
+    pub fn effective_pane_usage(
+        &self,
+        pane_id: PaneId,
+        now: std::time::Instant,
+    ) -> Option<&crate::api::schema::PaneUsageInfo> {
+        let stored = self.pane_usage.get(&pane_id)?;
+        if stored.expires_at.is_some_and(|deadline| now >= deadline) {
+            return None;
+        }
+        Some(&stored.info)
     }
 
     pub(crate) fn remove_alias_shadowed_by_new_pane(&mut self, pane_id: PaneId) {
@@ -1800,7 +1832,9 @@ impl AppState {
             hide_tab_bar_when_single_tab: false,
             system_monitor_enabled: false,
             system_monitor: None,
+            context_usage: ContextUsageConfig::default(),
             pane_git: std::collections::HashMap::new(),
+            pane_usage: std::collections::HashMap::new(),
             pane_history_persistence: false,
             reveal_hidden_cursor_for_cjk_ime: false,
             cjk_ime_agent_filter_configured: false,

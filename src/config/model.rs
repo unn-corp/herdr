@@ -812,6 +812,8 @@ pub struct UiConfig {
     pub system_monitor: bool,
     /// How often the system monitor strip re-samples, in milliseconds. Default: 2000.
     pub system_monitor_interval_ms: u64,
+    /// Per-pane AI context-window usage shown in the system monitor strip.
+    pub context_usage: ContextUsageConfig,
     /// Use the terminal's default background for all Herdr chrome instead of the
     /// theme's solid fills, so a transparent terminal shows through. Default: false.
     pub transparent_background: bool,
@@ -987,6 +989,33 @@ impl Default for WorktreesConfig {
     }
 }
 
+/// `[ui.context_usage]` - per-pane AI context-window usage shown in the top
+/// monitor strip (to the left of git branch spans). Only rendered when the
+/// system monitor strip itself is enabled.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct ContextUsageConfig {
+    /// Show the context-usage segment. Default: true.
+    pub enabled: bool,
+    /// Width of the usage bar in cells. Default: 8.
+    pub bar_width: u16,
+    /// Show a reset countdown when a provider supplies one. Default: true.
+    pub show_reset: bool,
+    /// Show the model name alongside usage. Default: false.
+    pub show_model: bool,
+}
+
+impl Default for ContextUsageConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            bar_width: 8,
+            show_reset: true,
+            show_model: false,
+        }
+    }
+}
+
 impl Default for UiConfig {
     fn default() -> Self {
         Self {
@@ -1009,6 +1038,7 @@ impl Default for UiConfig {
             agent_panel_sort: AgentPanelSortConfig::Spaces,
             system_monitor: false,
             system_monitor_interval_ms: 2000,
+            context_usage: ContextUsageConfig::default(),
             transparent_background: false,
             accent: "cyan".into(),
             toast: ToastConfig::default(),
@@ -1202,6 +1232,28 @@ transparent_background = true
         assert!(config.ui.system_monitor);
         assert_eq!(config.ui.system_monitor_interval_ms, 500);
         assert!(config.ui.transparent_background);
+    }
+
+    #[test]
+    fn context_usage_config_parses_and_defaults() {
+        let defaults = Config::default();
+        assert!(defaults.ui.context_usage.enabled);
+        assert_eq!(defaults.ui.context_usage.bar_width, 8);
+        assert!(defaults.ui.context_usage.show_reset);
+        assert!(!defaults.ui.context_usage.show_model);
+
+        let toml = r#"
+[ui.context_usage]
+enabled = false
+bar_width = 12
+show_model = true
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        assert!(!config.ui.context_usage.enabled);
+        assert_eq!(config.ui.context_usage.bar_width, 12);
+        // Unspecified fields keep their defaults.
+        assert!(config.ui.context_usage.show_reset);
+        assert!(config.ui.context_usage.show_model);
     }
 
     #[test]

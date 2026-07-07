@@ -2519,6 +2519,40 @@ impl AppState {
                 })
                 .into_iter()
                 .collect(),
+            AppEvent::HookUsageReported {
+                pane_id,
+                source,
+                usage,
+                seq,
+                ttl,
+            } => {
+                // Latest-wins, with a per-source sequence guard so an out-of-order
+                // report cannot regress a newer one. Display-only, so no pane
+                // state update is produced.
+                let superseded = self.pane_usage.get(&pane_id).is_some_and(|existing| {
+                    existing.info.source == source
+                        && matches!((existing.seq, seq), (Some(prev), Some(next)) if prev >= next)
+                });
+                if !superseded {
+                    match usage {
+                        Some(info) => {
+                            let expires_at = ttl.map(|d| std::time::Instant::now() + d);
+                            self.pane_usage.insert(
+                                pane_id,
+                                super::state::StoredPaneUsage {
+                                    info: *info,
+                                    expires_at,
+                                    seq,
+                                },
+                            );
+                        }
+                        None => {
+                            self.pane_usage.remove(&pane_id);
+                        }
+                    }
+                }
+                Vec::new()
+            }
             AppEvent::HookAuthorityCleared {
                 pane_id,
                 source,

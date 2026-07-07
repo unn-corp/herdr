@@ -1,0 +1,26 @@
+[package]
+name = "herdr-context-usage"
+version = "0.1.0"
+edition = "2021"
+description = "Collects AI agent context-window and reset usage for Herdr panes."
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/ogulcancelik/herdr"
+publish = false
+
+# Standalone crate: intentionally NOT a member of the herdr package/workspace so
+# that building or releasing herdr never pulls this in. Built and tested on its
+# own via the `plugin-context-usage-test` just recipe, mirroring
+# workers/plugin-marketplace.
+
+[[bin]]
+name = "herdr-context-usage"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4.5", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+directories = "5"
+
+[dev-dependencies]
+tempfile = "3"

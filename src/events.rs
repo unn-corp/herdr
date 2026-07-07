@@ -103,6 +103,16 @@ pub enum AppEvent {
         seq: Option<u64>,
         ttl: Option<std::time::Duration>,
     },
+    /// Display-only context-window usage was reported for a pane. `usage` is
+    /// `None` when the report asked to clear the pane's usage. Boxed to keep the
+    /// `AppEvent` enum small, since it rides `LoopEvent` on the hot path.
+    HookUsageReported {
+        pane_id: PaneId,
+        source: String,
+        usage: Option<Box<crate::api::schema::PaneUsageInfo>>,
+        seq: Option<u64>,
+        ttl: Option<std::time::Duration>,
+    },
     /// Hook authority was explicitly cleared for a pane.
     HookAuthorityCleared {
         pane_id: PaneId,

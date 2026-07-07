@@ -442,6 +442,10 @@ impl App {
             custom_status: presentation.custom_status,
             state_labels: presentation.state_labels,
             agent_session: terminal_agent_session_info(terminal),
+            usage: self
+                .state
+                .effective_pane_usage(pane_id, std::time::Instant::now())
+                .cloned(),
             revision: terminal.revision,
         })
     }
