@@ -145,7 +145,8 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 
 [update]
 # Update channel used by background version checks and `herdr update`.
-# Use "stable" for normal releases or "preview" for opt-in preview builds.
+# Defaults to "stable" on Linux/macOS and "preview" on Windows.
+# Set explicitly to choose stable releases or opt-in preview builds.
 # channel = "stable"
 
 # Check herdr.dev for new Herdr versions in the background.

@@ -1116,6 +1116,24 @@ manifest_check = false
         assert!(!config.update.manifest_check);
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn windows_update_config_defaults_to_preview() {
+        let empty: Config = toml::from_str("").unwrap();
+        let without_update_channel: Config =
+            toml::from_str("[update]\nversion_check = false").unwrap();
+
+        assert_eq!(
+            Config::default().update.channel,
+            UpdateChannelConfig::Preview
+        );
+        assert_eq!(empty.update.channel, UpdateChannelConfig::Preview);
+        assert_eq!(
+            without_update_channel.update.channel,
+            UpdateChannelConfig::Preview
+        );
+    }
+
     #[test]
     fn terminal_default_shell_defaults_empty_and_parses() {
         let default_config = Config::default();
