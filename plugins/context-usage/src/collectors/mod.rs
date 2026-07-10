@@ -1,12 +1,12 @@
 //! Per-CLI collectors that translate an agent's local telemetry into a
 //! [`crate::cache::UsageRecord`].
 //!
-//! Phase 1 ships the Claude Code statusLine collector. Codex, Antigravity,
-//! OpenCode, and Hermes adapters land in later phases behind the same cache
-//! contract.
+//! Claude and Antigravity are push collectors (statusLine hooks). Codex,
+//! OpenCode, Hermes, and Grok are pull collectors driven by `poll`.
 
 pub mod antigravity;
 pub mod claude;
 pub mod codex;
+pub mod grok;
 pub mod hermes;
 pub mod opencode;

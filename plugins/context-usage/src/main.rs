@@ -125,7 +125,7 @@ fn run_collect(
             collect_codex(cache_root);
             Ok(std::process::ExitCode::SUCCESS)
         }
-        "opencode" | "hermes" => {
+        "opencode" | "hermes" | "grok" | "grok-build" => {
             collect_pull(cache_root, agent);
             Ok(std::process::ExitCode::SUCCESS)
         }
@@ -136,7 +136,7 @@ fn run_collect(
         other => {
             eprintln!(
                 "herdr-context-usage: unknown collect agent '{other}' \
-                 (supported: claude, codex, opencode, hermes, antigravity)"
+                 (supported: claude, codex, opencode, hermes, grok, antigravity)"
             );
             Ok(std::process::ExitCode::FAILURE)
         }
@@ -163,6 +163,12 @@ fn collect_pull(cache_root: &std::path::Path, agent: &str) {
         "hermes" => {
             if let Some(usage) = collectors::hermes::usage_for_cwd(&cwd) {
                 let record = collectors::hermes::record(&usage, &pane_id, &ctx, now_unix());
+                report::persist_and_report(cache_root, &record);
+            }
+        }
+        "grok" | "grok-build" => {
+            if let Some(usage) = collectors::grok::usage_for_cwd(&cwd) {
+                let record = collectors::grok::record(&usage, &pane_id, &ctx, now_unix());
                 report::persist_and_report(cache_root, &record);
             }
         }

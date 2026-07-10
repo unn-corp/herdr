@@ -30,6 +30,10 @@ pub fn context_window(model_id: &str) -> Option<u64> {
         ("gemini-2.5", 1_048_576),
         ("gemini-1.5", 1_048_576),
         ("gemini", 1_048_576),
+        // xAI Grok Build (models_cache is preferred when present; these are fallbacks)
+        ("grok-4", 500_000),
+        ("grok-composer", 200_000),
+        ("grok", 500_000),
         // Meta / Mistral / Qwen / DeepSeek / Nemotron (common open weights)
         ("llama-3", 128_000),
         ("qwen", 131_072),
@@ -55,6 +59,8 @@ mod tests {
         assert_eq!(context_window("gpt-5.5"), Some(400_000));
         assert_eq!(context_window("gemini-2.5-pro"), Some(1_048_576));
         assert_eq!(context_window("nemotron-3-ultra-free"), Some(131_072));
+        assert_eq!(context_window("grok-4.5"), Some(500_000));
+        assert_eq!(context_window("grok-composer-2.5-fast"), Some(200_000));
     }
 
     #[test]

@@ -13,7 +13,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::Deserialize;
 
-use crate::collectors::{codex, hermes, opencode};
+use crate::collectors::{codex, grok, hermes, opencode};
 use crate::context::{herdr_bin, PaneContext};
 use crate::report;
 
@@ -114,6 +114,16 @@ fn collect_pane(cache_root: &Path, pane: &Pane, now_unix: i64) -> bool {
             // user set hermes = "prefer-herdr".
             if let Some(usage) = hermes::usage_for_cwd(cwd) {
                 let record = hermes::record(&usage, &pane.pane_id, &pane.context(), now_unix);
+                report::persist_and_report(cache_root, &record);
+                return true;
+            }
+            false
+        }
+        // Single Grok brand: process alias grok-build normalizes to agent "grok",
+        // but tolerate the alias if it ever appears on a pane label.
+        "grok" | "grok-build" => {
+            if let Some(usage) = grok::usage_for_cwd(cwd) {
+                let record = grok::record(&usage, &pane.pane_id, &pane.context(), now_unix);
                 report::persist_and_report(cache_root, &record);
                 return true;
             }

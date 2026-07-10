@@ -30,6 +30,7 @@ from server state instead of reading cache files.
 | OpenCode | yes (estimated) | no | SQLite `session` + last message `tokens.input`, sized by a model registry | pull (`poll`) |
 | Antigravity | harvester ready, unverified | when present | statusLine JSON (defensive parse) | push (statusLine hook) |
 | Hermes | estimated (prefer-herdr mode) | no | SQLite: avg total input per API call, sized by registry | pull (`poll`); default prefer-native |
+| Grok Build | yes (official from signals; estimated fallback) | no | `~/.grok/sessions/**/signals.json` (`contextWindowUsage`); fallback `updates.jsonl` `_meta.totalTokens` + `models_cache.json` | pull (`poll`) |
 
 "Context %" and "reset timer" are independent: a session can report one without
 the other. Reset times are only ever shown when the provider supplies a
