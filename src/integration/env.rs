@@ -116,6 +116,10 @@ pub(crate) fn hermes_plugin_dir() -> io::Result<PathBuf> {
         .join(super::HERMES_PLUGIN_INSTALL_NAME))
 }
 
+pub(crate) fn grok_dir() -> io::Result<PathBuf> {
+    Ok(home_dir()?.join(".grok"))
+}
+
 pub(crate) fn qodercli_dir() -> io::Result<PathBuf> {
     config_dir_from_env_or_home(QODERCLI_CONFIG_DIR_ENV_VAR, &[".qoder"])
 }
