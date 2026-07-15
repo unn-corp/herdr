@@ -568,19 +568,18 @@ mod tests {
     use interprocess::local_socket::traits::Listener as _;
     use std::io::{BufRead, BufReader, Write};
     use std::path::PathBuf;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::sync::Arc;
     use std::time::{Duration, Instant};
     use tokio::sync::mpsc;
 
-    fn local_stream_pair(name: &str) -> (LocalStream, LocalStream, PathBuf) {
+    static NEXT_LOCAL_STREAM_ID: AtomicU64 = AtomicU64::new(1);
+
+    fn local_stream_pair(_name: &str) -> (LocalStream, LocalStream, PathBuf) {
         let unique = format!(
-            "herdr-{name}-{}-{}",
+            "hpg-{}-{}.sock",
             std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
+            NEXT_LOCAL_STREAM_ID.fetch_add(1, Ordering::Relaxed)
         );
         let path = std::env::temp_dir().join(unique);
         let listener = crate::ipc::bind_local_listener(&path).unwrap();
