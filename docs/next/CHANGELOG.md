@@ -7,7 +7,7 @@
 - Added macOS support for the `HERDR_AGENT=<agent>` foreground-process hint, allowing agents hidden behind host-visible wrappers such as `nono` to use the named agent's screen manifest. (#679)
 
 ### Fixed
-- Background agent-detection manifest checks no longer flash curl console windows on Windows. (#1468)
+- Background update checks, captured plugin commands, and workspace Git probes no longer flash console windows on Windows. (#1468)
 - Live handoff now preserves installed plugins and no longer lets the next plugin installation overwrite the existing registry. (#893)
 - `herdr wait agent-status` now returns `pane_not_found` promptly when its target pane closes instead of waiting for the full timeout. (#1439)
 
