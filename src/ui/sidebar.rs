@@ -213,6 +213,7 @@ fn workspace_row_height(app: &AppState, ws: &crate::workspace::Workspace, indent
             branch: ws.branch().as_deref(),
             state_text: state_label(state, seen),
             ahead_behind: ws.git_ahead_behind(),
+            default_cwd: ws.default_cwd.as_deref(),
             tokens: &token_values,
             suppress_git_details: indented,
         },
@@ -931,6 +932,8 @@ fn resolved_token_spans(
                     + usize::from(*behind > 0) * display_width(&format!("↓{behind}"))
                     + usize::from(*ahead > 0 && *behind > 0)
             }
+            // The "↪ " prefix rendered ahead of the path.
+            ResolvedTokenKind::DefaultCwd(_) => 2,
             _ => 0,
         })
         .collect::<Vec<_>>();
@@ -944,6 +947,7 @@ fn resolved_token_spans(
             | ResolvedTokenKind::Agent(text)
             | ResolvedTokenKind::TerminalTitle(text)
             | ResolvedTokenKind::Branch(text)
+            | ResolvedTokenKind::DefaultCwd(text)
             | ResolvedTokenKind::Custom(text) => display_width(text),
             _ => 0,
         })
@@ -1052,6 +1056,16 @@ fn resolved_token_spans(
             | ResolvedTokenKind::Pane(text)
             | ResolvedTokenKind::Agent(text)
             | ResolvedTokenKind::Branch(text) => {
+                spans.push(Span::styled(
+                    truncate_end(text, budgets[index]),
+                    apply_token_style(secondary_style, token.style),
+                ));
+            }
+            ResolvedTokenKind::DefaultCwd(text) => {
+                spans.push(Span::styled(
+                    "↪ ",
+                    apply_token_style(secondary_style, token.style),
+                ));
                 spans.push(Span::styled(
                     truncate_end(text, budgets[index]),
                     apply_token_style(secondary_style, token.style),
@@ -1213,6 +1227,7 @@ fn render_workspace_list(
                 branch: ws.branch().as_deref(),
                 state_text: state_label(display_state, display_seen),
                 ahead_behind: ws.git_ahead_behind(),
+                default_cwd: ws.default_cwd.as_deref(),
                 tokens: &token_values,
                 suppress_git_details: card.indented,
             },

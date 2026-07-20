@@ -273,6 +273,7 @@ row_gap = 0
 rows = [
   ["state_icon", "workspace"],
   ["branch", "git_status"],
+  ["default_cwd"],
 ]
 ```
 
@@ -295,6 +296,7 @@ Space rows accept these built-in tokens:
 - `workspace` — workspace name.
 - `branch` — Git branch when available.
 - `git_status` — Git ahead and behind counts when nonzero.
+- `default_cwd` — the space's default working directory, shown after a `↪` arrow, when one is set.
 - `$name` — custom workspace metadata named `name`.
 
 Tokens render in their configured order. Herdr normally separates adjacent values with ` · ` and uses a single space after `state_icon`. Missing values and their separators disappear; a row disappears when none of its tokens have a value. Each layout may contain at most 16 rows, with at most 16 tokens in each row.

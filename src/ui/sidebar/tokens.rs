@@ -21,6 +21,7 @@ pub(super) enum ResolvedTokenKind {
     TerminalTitle(String),
     Branch(String),
     GitStatus { ahead: usize, behind: usize },
+    DefaultCwd(String),
     Custom(String),
 }
 
@@ -93,6 +94,7 @@ pub(super) struct SpaceTokenContext<'a> {
     pub branch: Option<&'a str>,
     pub state_text: &'a str,
     pub ahead_behind: Option<(usize, usize)>,
+    pub default_cwd: Option<&'a str>,
     pub tokens: &'a std::collections::HashMap<String, String>,
     pub suppress_git_details: bool,
 }
@@ -126,6 +128,9 @@ pub(super) fn space_rows(
                             .filter(|(ahead, behind)| *ahead > 0 || *behind > 0)
                             .map(|(ahead, behind)| ResolvedTokenKind::GitStatus { ahead, behind }),
                         SpaceSidebarToken::GitStatus => None,
+                        SpaceSidebarToken::DefaultCwd => context
+                            .default_cwd
+                            .map(|cwd| ResolvedTokenKind::DefaultCwd(cwd.to_string())),
                         SpaceSidebarToken::Custom(name) => context
                             .tokens
                             .get(name)
@@ -297,6 +302,7 @@ mod tests {
                     workspace: "feature",
                     branch: Some("worktree/feature"),
                     state_text: "idle",
+                    default_cwd: None,
                     ahead_behind: Some((2, 1)),
                     tokens: &std::collections::HashMap::new(),
                     suppress_git_details: true,
@@ -324,6 +330,7 @@ mod tests {
                     workspace: "repo",
                     branch: None,
                     state_text: "idle",
+                    default_cwd: None,
                     ahead_behind: None,
                     tokens: &tokens,
                     suppress_git_details: false,
@@ -333,5 +340,35 @@ mod tests {
                 "2 changes".into()
             ))]]
         );
+    }
+
+    #[test]
+    fn default_cwd_token_resolves_only_when_the_space_has_one() {
+        let tokens = std::collections::HashMap::new();
+        let config = SpacesSidebarConfig {
+            rows: vec![vec![SpaceSidebarToken::DefaultCwd]],
+            row_gap: 0,
+        };
+        let ctx = |default_cwd| SpaceTokenContext {
+            workspace: "arcwright",
+            branch: None,
+            state_text: "idle",
+            ahead_behind: None,
+            default_cwd,
+            tokens: &tokens,
+            suppress_git_details: false,
+        };
+
+        // With a default_cwd the row resolves to the path token.
+        let rows = space_rows(&config, ctx(Some("/home/dev/proj")));
+        assert_eq!(
+            rows,
+            vec![vec![ResolvedToken::unstyled(
+                ResolvedTokenKind::DefaultCwd("/home/dev/proj".to_string())
+            )]]
+        );
+
+        // Without one the row collapses entirely, so it costs no sidebar height.
+        assert!(space_rows(&config, ctx(None)).is_empty());
     }
 }

@@ -124,6 +124,9 @@ pub enum SpaceSidebarToken {
     Workspace,
     Branch,
     GitStatus,
+    /// The space's configured default working directory, shown with a leading arrow.
+    /// Resolves to nothing when the space has no default_cwd, so its row collapses.
+    DefaultCwd,
     Custom(String),
     Styled {
         token: Box<SpaceSidebarToken>,
@@ -252,6 +255,7 @@ fn space_token_name(token: &SpaceSidebarToken) -> String {
         SpaceSidebarToken::Workspace => "workspace".into(),
         SpaceSidebarToken::Branch => "branch".into(),
         SpaceSidebarToken::GitStatus => "git_status".into(),
+        SpaceSidebarToken::DefaultCwd => "default_cwd".into(),
         SpaceSidebarToken::Custom(name) => format!("${name}"),
         SpaceSidebarToken::Styled { token, .. } => space_token_name(token),
     }
@@ -338,6 +342,7 @@ impl<'de> Deserialize<'de> for SpaceSidebarToken {
                 ("workspace", Self::Workspace),
                 ("branch", Self::Branch),
                 ("git_status", Self::GitStatus),
+                ("default_cwd", Self::DefaultCwd),
             ],
         )
         .map_err(serde::de::Error::custom)?;
@@ -418,6 +423,7 @@ impl Default for SpacesSidebarConfig {
             rows: vec![
                 vec![SpaceSidebarToken::StateIcon, SpaceSidebarToken::Workspace],
                 vec![SpaceSidebarToken::Branch, SpaceSidebarToken::GitStatus],
+                vec![SpaceSidebarToken::DefaultCwd],
             ],
             row_gap: DEFAULT_SIDEBAR_ROW_GAP,
         }
@@ -456,6 +462,9 @@ mod tests {
             vec![
                 vec![SpaceSidebarToken::StateIcon, SpaceSidebarToken::Workspace],
                 vec![SpaceSidebarToken::Branch, SpaceSidebarToken::GitStatus],
+                // This fork keeps a default_cwd row. It collapses to nothing for spaces without a
+                // default working directory, so it costs no height unless the space has one.
+                vec![SpaceSidebarToken::DefaultCwd],
             ]
         );
         assert_eq!(config.spaces.row_gap, 0);
