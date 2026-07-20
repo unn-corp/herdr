@@ -165,15 +165,7 @@ pub(crate) fn handle_navigator_key(
     if state.navigator.search_focused {
         match key.code {
             KeyCode::Esc => {
-                if state.navigator.query.is_empty() {
-                    state.navigator.search_focused = false;
-                    leave_modal(state);
-                } else {
-                    state.navigator.query.clear();
-                    state.navigator.state_filter = None;
-                    state.navigator.search_focused = false;
-                    state.clamp_navigator_selection_from(terminal_runtimes);
-                }
+                state.navigator.search_focused = false;
             }
             KeyCode::Enter => {
                 state.accept_navigator_selection_from(terminal_runtimes);
@@ -181,7 +173,7 @@ pub(crate) fn handle_navigator_key(
             KeyCode::Backspace => {
                 state.navigator.state_filter = None;
                 state.navigator.query.pop();
-                state.clamp_navigator_selection_from(terminal_runtimes);
+                state.select_first_navigator_match_from(terminal_runtimes);
             }
             KeyCode::Up => state.move_navigator_selection_from(terminal_runtimes, -1),
             KeyCode::Down => state.move_navigator_selection_from(terminal_runtimes, 1),
@@ -208,19 +200,12 @@ pub(crate) fn handle_navigator_key(
 
     match key.code {
         KeyCode::Esc => {
-            if state.navigator.query.is_empty() && state.navigator.state_filter.is_none() {
-                leave_modal(state);
-            } else {
-                state.navigator.query.clear();
-                state.navigator.state_filter = None;
-                state.clamp_navigator_selection_from(terminal_runtimes);
-            }
+            leave_modal(state);
         }
         KeyCode::Enter => {
             state.accept_navigator_selection_from(terminal_runtimes);
         }
         KeyCode::Char('/') => {
-            state.navigator.query.clear();
             state.navigator.state_filter = None;
             state.navigator.search_focused = true;
             state.clamp_navigator_selection_from(terminal_runtimes);
@@ -237,22 +222,22 @@ pub(crate) fn handle_navigator_key(
         KeyCode::Char('b') if key.modifiers.is_empty() => {
             state.navigator.query.clear();
             state.navigator.state_filter = Some(NavigatorStateFilter::Blocked);
-            state.clamp_navigator_selection_from(terminal_runtimes);
+            state.select_first_navigator_match_from(terminal_runtimes);
         }
         KeyCode::Char('w') if key.modifiers.is_empty() => {
             state.navigator.query.clear();
             state.navigator.state_filter = Some(NavigatorStateFilter::Working);
-            state.clamp_navigator_selection_from(terminal_runtimes);
+            state.select_first_navigator_match_from(terminal_runtimes);
         }
         KeyCode::Char('i') if key.modifiers.is_empty() => {
             state.navigator.query.clear();
             state.navigator.state_filter = Some(NavigatorStateFilter::Idle);
-            state.clamp_navigator_selection_from(terminal_runtimes);
+            state.select_first_navigator_match_from(terminal_runtimes);
         }
         KeyCode::Char('d') if key.modifiers.is_empty() => {
             state.navigator.query.clear();
             state.navigator.state_filter = Some(NavigatorStateFilter::Done);
-            state.clamp_navigator_selection_from(terminal_runtimes);
+            state.select_first_navigator_match_from(terminal_runtimes);
         }
         KeyCode::Char('j') | KeyCode::Down => {
             state.move_navigator_selection_from(terminal_runtimes, 1)
@@ -261,12 +246,12 @@ pub(crate) fn handle_navigator_key(
             state.move_navigator_selection_from(terminal_runtimes, -1)
         }
         KeyCode::Char('d') if key.modifiers == KeyModifiers::CONTROL => state
-            .move_navigator_selection_from(
+            .move_navigator_selection_by_lines_from(
                 terminal_runtimes,
                 (state.navigator_body_rect().height / 2).max(1) as isize,
             ),
         KeyCode::Char('u') if key.modifiers == KeyModifiers::CONTROL => state
-            .move_navigator_selection_from(
+            .move_navigator_selection_by_lines_from(
                 terminal_runtimes,
                 -((state.navigator_body_rect().height / 2).max(1) as isize),
             ),
@@ -296,7 +281,7 @@ pub(crate) fn insert_navigator_search_text(
     }
     state.navigator.state_filter = None;
     state.navigator.query.push_str(text);
-    state.clamp_navigator_selection_from(terminal_runtimes);
+    state.select_first_navigator_match_from(terminal_runtimes);
 }
 
 pub(crate) fn handle_keybind_help_key(state: &mut AppState, key: KeyEvent) {
@@ -317,6 +302,7 @@ pub(super) fn open_rename_workspace(
     terminal_runtimes: &crate::terminal::TerminalRuntimeRegistry,
     ws_idx: usize,
 ) {
+    state.pending_workspace_create_cwd = None;
     state.selected = ws_idx;
     state.rename_pane_target = None;
     state.name_input =
@@ -337,9 +323,21 @@ pub(super) fn open_set_workspace_dir(state: &mut AppState, ws_idx: usize) {
     state.mode = Mode::SetWorkspaceDir;
 }
 
+pub(crate) fn open_new_workspace_dialog(state: &mut AppState, cwd: std::path::PathBuf) {
+    let suggested_name = crate::workspace::derive_label_from_cwd(&cwd);
+    state.creating_new_tab = false;
+    state.requested_new_tab_name = None;
+    state.pending_workspace_create_cwd = Some(cwd);
+    state.rename_pane_target = None;
+    state.name_input = suggested_name;
+    state.name_input_replace_on_type = true;
+    state.mode = Mode::RenameWorkspace;
+}
+
 pub(super) fn open_rename_active_tab(state: &mut AppState, replace_on_type: bool) {
     state.creating_new_tab = false;
     state.requested_new_tab_name = None;
+    state.pending_workspace_create_cwd = None;
     state.rename_pane_target = None;
     if let Some(ws) = state.active.and_then(|i| state.workspaces.get(i)) {
         if let Some(name) = ws.active_tab_display_name() {
@@ -360,12 +358,18 @@ pub(super) fn open_rename_pane(state: &mut AppState, pane_id: crate::layout::Pan
     let terminal = state.terminals.get(&pane.attached_terminal_id);
     state.creating_new_tab = false;
     state.requested_new_tab_name = None;
+    state.pending_workspace_create_cwd = None;
     state.rename_pane_target = Some(pane_id);
     state.name_input = terminal
         .and_then(|t| t.manual_label.clone())
         .unwrap_or_default();
     state.name_input_replace_on_type = terminal.and_then(|t| t.manual_label.as_ref()).is_none();
     state.mode = Mode::RenamePane;
+}
+
+fn workspace_create_label(input: &str, suggested_name: &str) -> Option<String> {
+    let name = input.trim();
+    (!name.is_empty() && name != suggested_name).then(|| name.to_string())
 }
 
 fn next_new_tab_default_name(state: &AppState) -> String {
@@ -379,6 +383,7 @@ fn next_new_tab_default_name(state: &AppState) -> String {
 pub(super) fn open_new_tab_dialog(state: &mut AppState) {
     state.creating_new_tab = true;
     state.requested_new_tab_name = None;
+    state.pending_workspace_create_cwd = None;
     state.rename_pane_target = None;
     state.name_input = next_new_tab_default_name(state);
     state.name_input_replace_on_type = true;
@@ -450,7 +455,11 @@ pub(super) fn apply_rename_action(state: &mut AppState, action: ModalAction) {
                 state.name_input.trim().to_string()
             };
             match state.mode {
-                Mode::RenameWorkspace if !state.workspaces.is_empty() && !new_name.is_empty() => {
+                Mode::RenameWorkspace
+                    if state.pending_workspace_create_cwd.is_none()
+                        && !state.workspaces.is_empty()
+                        && !new_name.is_empty() =>
+                {
                     let workspace_id = state.workspaces[state.selected].id.clone();
                     state.workspaces[state.selected].set_custom_name(new_name);
                     crate::logging::workspace_renamed(&workspace_id);
@@ -521,6 +530,7 @@ pub(super) fn apply_rename_action(state: &mut AppState, action: ModalAction) {
                 _ => {}
             }
             state.creating_new_tab = false;
+            state.pending_workspace_create_cwd = None;
             state.rename_pane_target = None;
             state.name_input.clear();
             state.name_input_replace_on_type = false;
@@ -533,6 +543,7 @@ pub(super) fn apply_rename_action(state: &mut AppState, action: ModalAction) {
         ModalAction::Cancel => {
             state.creating_new_tab = false;
             state.requested_new_tab_name = None;
+            state.pending_workspace_create_cwd = None;
             state.rename_pane_target = None;
             state.name_input.clear();
             state.name_input_replace_on_type = false;
@@ -966,15 +977,29 @@ impl App {
         };
 
         match self.state.mode {
-            Mode::RenameWorkspace if !self.state.workspaces.is_empty() && !new_name.is_empty() => {
-                let workspace_id = self.public_workspace_id(self.state.selected);
-                self.runtime_workspace_rename(
-                    "tui.workspace.rename",
-                    crate::api::schema::WorkspaceRenameParams {
-                        workspace_id,
-                        label: new_name,
-                    },
-                );
+            Mode::RenameWorkspace => {
+                if let Some(cwd) = self.state.pending_workspace_create_cwd.take() {
+                    let suggested_name = crate::workspace::derive_label_from_cwd(&cwd);
+                    let label = workspace_create_label(&new_name, &suggested_name);
+                    self.runtime_workspace_create(
+                        "tui.workspace.create_named",
+                        crate::api::schema::WorkspaceCreateParams {
+                            cwd: Some(cwd.display().to_string()),
+                            focus: true,
+                            label,
+                            env: Default::default(),
+                        },
+                    );
+                } else if !self.state.workspaces.is_empty() && !new_name.is_empty() {
+                    let workspace_id = self.public_workspace_id(self.state.selected);
+                    self.runtime_workspace_rename(
+                        "tui.workspace.rename",
+                        crate::api::schema::WorkspaceRenameParams {
+                            workspace_id,
+                            label: new_name,
+                        },
+                    );
+                }
             }
             Mode::RenameTab if self.state.creating_new_tab => {
                 let default_name = next_new_tab_default_name(&self.state);
@@ -1338,6 +1363,7 @@ impl App {
 fn cancel_rename_modal(state: &mut AppState) {
     state.creating_new_tab = false;
     state.requested_new_tab_name = None;
+    state.pending_workspace_create_cwd = None;
     state.rename_pane_target = None;
     state.name_input.clear();
     state.name_input_replace_on_type = false;
@@ -1435,6 +1461,17 @@ mod tests {
         app.state.active = (!app.state.workspaces.is_empty()).then_some(0);
         app.state.selected = 0;
         app
+    }
+
+    #[test]
+    fn workspace_create_label_preserves_auto_name_for_suggestion_or_blank() {
+        assert_eq!(workspace_create_label("project", "project"), None);
+        assert_eq!(workspace_create_label("", "project"), None);
+        assert_eq!(workspace_create_label("   ", "project"), None);
+        assert_eq!(
+            workspace_create_label("  logs  ", "project").as_deref(),
+            Some("logs")
+        );
     }
 
     fn mark_worktree_space_member(state: &mut AppState, ws_idx: usize, key: &str) {
@@ -1745,6 +1782,107 @@ mod tests {
         insert_navigator_search_text(&mut state, &terminal_runtimes, "beta");
 
         assert!(state.navigator.query.is_empty());
+    }
+
+    #[test]
+    fn navigator_empty_search_escape_returns_to_commands() {
+        let mut state = state_with_workspaces(&["alpha", "beta"]);
+        let terminal_runtimes = crate::terminal::TerminalRuntimeRegistry::new();
+        state.mode = Mode::Navigator;
+        state.navigator.search_focused = true;
+
+        handle_navigator_key(
+            &mut state,
+            &terminal_runtimes,
+            KeyEvent::new(KeyCode::Esc, KeyModifiers::empty()),
+        );
+
+        assert_eq!(state.mode, Mode::Navigator);
+        assert!(!state.navigator.search_focused);
+        assert!(state.navigator.query.is_empty());
+
+        handle_navigator_key(
+            &mut state,
+            &terminal_runtimes,
+            KeyEvent::new(KeyCode::Char('w'), KeyModifiers::empty()),
+        );
+
+        assert_eq!(
+            state.navigator.state_filter,
+            Some(NavigatorStateFilter::Working)
+        );
+        assert!(state.navigator.query.is_empty());
+
+        handle_navigator_key(
+            &mut state,
+            &terminal_runtimes,
+            KeyEvent::new(KeyCode::Esc, KeyModifiers::empty()),
+        );
+
+        assert_eq!(state.mode, Mode::Terminal);
+    }
+
+    #[test]
+    fn navigator_search_escape_blurs_then_next_escape_closes() {
+        let mut state = state_with_workspaces(&["alpha", "beta"]);
+        let terminal_runtimes = crate::terminal::TerminalRuntimeRegistry::new();
+        state.mode = Mode::Navigator;
+        state.navigator.search_focused = true;
+        state.navigator.query = "a".into();
+
+        handle_navigator_key(
+            &mut state,
+            &terminal_runtimes,
+            KeyEvent::new(KeyCode::Esc, KeyModifiers::empty()),
+        );
+
+        assert_eq!(state.mode, Mode::Navigator);
+        assert!(!state.navigator.search_focused);
+        assert_eq!(state.navigator.query, "a");
+
+        handle_navigator_key(
+            &mut state,
+            &terminal_runtimes,
+            KeyEvent::new(KeyCode::Char('j'), KeyModifiers::empty()),
+        );
+
+        assert_eq!(state.navigator.selected, 1);
+        assert_eq!(state.navigator.query, "a");
+
+        handle_navigator_key(
+            &mut state,
+            &terminal_runtimes,
+            KeyEvent::new(KeyCode::Char('/'), KeyModifiers::empty()),
+        );
+
+        assert_eq!(state.mode, Mode::Navigator);
+        assert!(state.navigator.search_focused);
+        assert_eq!(state.navigator.query, "a");
+
+        handle_navigator_key(
+            &mut state,
+            &terminal_runtimes,
+            KeyEvent::new(KeyCode::Char('l'), KeyModifiers::empty()),
+        );
+
+        assert_eq!(state.navigator.query, "al");
+
+        handle_navigator_key(
+            &mut state,
+            &terminal_runtimes,
+            KeyEvent::new(KeyCode::Esc, KeyModifiers::empty()),
+        );
+
+        assert_eq!(state.mode, Mode::Navigator);
+        assert!(!state.navigator.search_focused);
+
+        handle_navigator_key(
+            &mut state,
+            &terminal_runtimes,
+            KeyEvent::new(KeyCode::Esc, KeyModifiers::empty()),
+        );
+
+        assert_eq!(state.mode, Mode::Terminal);
     }
 
     #[test]

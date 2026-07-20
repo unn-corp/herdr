@@ -1,6 +1,9 @@
 use std::collections::HashMap;
 
-use crate::api::schema::{WorkspaceCreateParams, WorkspaceRenameParams, WorkspaceSetCwdParams};
+use crate::api::schema::{
+    Method, WorkspaceCreateParams, WorkspaceRenameParams, WorkspaceReportMetadataParams,
+    WorkspaceSetCwdParams,
+};
 
 pub(super) fn run_workspace_command(args: &[String]) -> std::io::Result<i32> {
     let Some(subcommand) = args.first().map(|arg| arg.as_str()) else {
@@ -16,6 +19,7 @@ pub(super) fn run_workspace_command(args: &[String]) -> std::io::Result<i32> {
         "rename" => workspace_rename(&args[1..]),
         "set-cwd" => workspace_set_cwd(&args[1..]),
         "clear-cwd" => workspace_clear_cwd(&args[1..]),
+        "report-metadata" => workspace_report_metadata(&args[1..]),
         "close" => workspace_close(&args[1..]),
         "help" | "--help" | "-h" => {
             print_workspace_help();
@@ -162,6 +166,91 @@ fn workspace_clear_cwd(args: &[String]) -> std::io::Result<i32> {
     })
 }
 
+fn workspace_report_metadata(args: &[String]) -> std::io::Result<i32> {
+    let Some(raw_workspace_id) = args.first() else {
+        eprintln!("usage: herdr workspace report-metadata <workspace_id> --source ID [--token NAME=VALUE] [--clear-token NAME] [--seq N] [--ttl-ms N]");
+        return Ok(2);
+    };
+    let workspace_id = super::normalize_workspace_id(raw_workspace_id);
+    let mut source = None;
+    let mut tokens = HashMap::new();
+    let mut seq = None;
+    let mut ttl_ms = None;
+    let mut index = 1;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--source" => {
+                let Some(value) = args.get(index + 1) else {
+                    eprintln!("missing value for --source");
+                    return Ok(2);
+                };
+                source = Some(value.clone());
+                index += 2;
+            }
+            "--token" => {
+                let Some(value) = args.get(index + 1) else {
+                    eprintln!("missing value for --token");
+                    return Ok(2);
+                };
+                let (key, value) = match super::parse_token_assignment(value) {
+                    Ok(token) => token,
+                    Err(message) => {
+                        eprintln!("{message}");
+                        return Ok(2);
+                    }
+                };
+                tokens.insert(key, value);
+                index += 2;
+            }
+            "--clear-token" => {
+                let Some(key) = args.get(index + 1) else {
+                    eprintln!("missing value for --clear-token");
+                    return Ok(2);
+                };
+                tokens.insert(key.clone(), None);
+                index += 2;
+            }
+            "--seq" => {
+                let Some(value) = args.get(index + 1) else {
+                    eprintln!("missing value for --seq");
+                    return Ok(2);
+                };
+                seq = Some(super::parse_u64_flag("--seq", value)?);
+                index += 2;
+            }
+            "--ttl-ms" => {
+                let Some(value) = args.get(index + 1) else {
+                    eprintln!("missing value for --ttl-ms");
+                    return Ok(2);
+                };
+                ttl_ms = Some(super::parse_u64_flag("--ttl-ms", value)?);
+                index += 2;
+            }
+            other => {
+                eprintln!("unknown option: {other}");
+                return Ok(2);
+            }
+        }
+    }
+    let Some(source) = source.filter(|source| !source.trim().is_empty()) else {
+        eprintln!("missing required --source");
+        return Ok(2);
+    };
+    if tokens.is_empty() {
+        eprintln!("missing token to set or clear");
+        return Ok(2);
+    }
+    super::send_ok_request(Method::WorkspaceReportMetadata(
+        WorkspaceReportMetadataParams {
+            workspace_id,
+            source,
+            tokens,
+            seq,
+            ttl_ms,
+        },
+    ))
+}
+
 fn workspace_close(args: &[String]) -> std::io::Result<i32> {
     let Some(raw_workspace_id) = args.first() else {
         eprintln!("usage: herdr workspace close <workspace_id>");
@@ -184,5 +273,6 @@ fn print_workspace_help() {
     eprintln!("  herdr workspace rename <workspace_id> <label>");
     eprintln!("  herdr workspace set-cwd <workspace_id> <path>");
     eprintln!("  herdr workspace clear-cwd <workspace_id>");
+    eprintln!("  herdr workspace report-metadata <workspace_id> --source ID [--token NAME=VALUE] [--clear-token NAME] [--seq N] [--ttl-ms N]");
     eprintln!("  herdr workspace close <workspace_id>");
 }

@@ -30,6 +30,25 @@ pub enum IntegrationTarget {
     Grok,
 }
 
+impl IntegrationTarget {
+    pub(crate) const ALL: [Self; 14] = [
+        Self::Pi,
+        Self::Omp,
+        Self::Claude,
+        Self::Codex,
+        Self::Copilot,
+        Self::Devin,
+        Self::Droid,
+        Self::Kimi,
+        Self::Opencode,
+        Self::Kilo,
+        Self::Hermes,
+        Self::Qodercli,
+        Self::Cursor,
+        Self::Mastracode,
+    ];
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct IntegrationInstallResult {
     pub messages: Vec<String>,

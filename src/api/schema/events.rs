@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 use super::common::{AgentStatus, ReadSource};
-use super::panes::{PaneInfo, PaneReadResult};
+use super::panes::{PaneInfo, PaneReadResult, PaneScrollInfo};
 use super::tabs::TabInfo;
 use super::workspaces::WorkspaceInfo;
 use super::worktrees::WorktreeInfo;
@@ -20,6 +20,8 @@ pub enum Subscription {
     WorkspaceCreated {},
     #[serde(rename = "workspace.updated")]
     WorkspaceUpdated {},
+    #[serde(rename = "workspace.metadata_updated")]
+    WorkspaceMetadataUpdated {},
     #[serde(rename = "workspace.renamed")]
     WorkspaceRenamed {},
     #[serde(rename = "workspace.moved")]
@@ -48,6 +50,8 @@ pub enum Subscription {
     PaneCreated {},
     #[serde(rename = "pane.closed")]
     PaneClosed {},
+    #[serde(rename = "pane.updated")]
+    PaneUpdated {},
     #[serde(rename = "pane.focused")]
     PaneFocused {},
     #[serde(rename = "pane.moved")]
@@ -72,6 +76,8 @@ pub enum Subscription {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         agent_status: Option<AgentStatus>,
     },
+    #[serde(rename = "pane.scroll_changed")]
+    PaneScrollChanged { pane_id: String },
     #[serde(rename = "layout.updated")]
     LayoutUpdated {},
 }
@@ -186,6 +192,7 @@ pub enum EventMatch {
 pub enum EventKind {
     WorkspaceCreated,
     WorkspaceUpdated,
+    WorkspaceMetadataUpdated,
     WorkspaceClosed,
     WorkspaceRenamed,
     WorkspaceMoved,
@@ -200,6 +207,7 @@ pub enum EventKind {
     TabFocused,
     PaneCreated,
     PaneClosed,
+    PaneUpdated,
     PaneFocused,
     PaneMoved,
     PaneOutputChanged,
@@ -214,6 +222,7 @@ impl EventKind {
         match self {
             EventKind::WorkspaceCreated => "workspace.created",
             EventKind::WorkspaceUpdated => "workspace.updated",
+            EventKind::WorkspaceMetadataUpdated => "workspace.metadata_updated",
             EventKind::WorkspaceClosed => "workspace.closed",
             EventKind::WorkspaceRenamed => "workspace.renamed",
             EventKind::WorkspaceMoved => "workspace.moved",
@@ -228,6 +237,7 @@ impl EventKind {
             EventKind::TabFocused => "tab.focused",
             EventKind::PaneCreated => "pane.created",
             EventKind::PaneClosed => "pane.closed",
+            EventKind::PaneUpdated => "pane.updated",
             EventKind::PaneFocused => "pane.focused",
             EventKind::PaneMoved => "pane.moved",
             EventKind::PaneOutputChanged => "pane.output_changed",
@@ -243,6 +253,7 @@ impl EventKind {
 pub const KNOWN_EVENT_KINDS: &[EventKind] = &[
     EventKind::WorkspaceCreated,
     EventKind::WorkspaceUpdated,
+    EventKind::WorkspaceMetadataUpdated,
     EventKind::WorkspaceClosed,
     EventKind::WorkspaceRenamed,
     EventKind::WorkspaceMoved,
@@ -257,6 +268,7 @@ pub const KNOWN_EVENT_KINDS: &[EventKind] = &[
     EventKind::TabFocused,
     EventKind::PaneCreated,
     EventKind::PaneClosed,
+    EventKind::PaneUpdated,
     EventKind::PaneFocused,
     EventKind::PaneMoved,
     EventKind::PaneOutputChanged,
@@ -334,6 +346,8 @@ mod known_event_name_tests {
         let names = plugin_hook_event_names();
         assert!(!names.contains(&"pane.output_changed"));
         assert!(!names.contains(&"layout.updated"));
+        assert!(!names.contains(&"workspace.metadata_updated"));
+        assert!(!names.contains(&"pane.updated"));
         assert!(names.contains(&"pane.moved"));
     }
 }
@@ -350,6 +364,8 @@ pub enum SubscriptionEventKind {
     PaneOutputMatched,
     #[serde(rename = "pane.agent_status_changed")]
     PaneAgentStatusChanged,
+    #[serde(rename = "pane.scroll_changed")]
+    ScrollChanged,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -363,6 +379,7 @@ pub struct SubscriptionEventEnvelope {
 pub enum SubscriptionEventData {
     PaneOutputMatched(PaneOutputMatchedEvent),
     PaneAgentStatusChanged(PaneAgentStatusChangedEvent),
+    ScrollChanged(PaneScrollChangedEvent),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -380,13 +397,18 @@ pub struct PaneAgentStatusChangedEvent {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub custom_status: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_agent: Option<String>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub state_labels: HashMap<String, String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PaneScrollChangedEvent {
+    pub pane_id: String,
+    pub workspace_id: String,
+    pub scroll: PaneScrollInfo,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -396,6 +418,9 @@ pub enum EventData {
         workspace: WorkspaceInfo,
     },
     WorkspaceUpdated {
+        workspace: WorkspaceInfo,
+    },
+    WorkspaceMetadataUpdated {
         workspace: WorkspaceInfo,
     },
     WorkspaceClosed {
@@ -460,6 +485,9 @@ pub enum EventData {
         pane_id: String,
         workspace_id: String,
     },
+    PaneUpdated {
+        pane: PaneInfo,
+    },
     PaneFocused {
         pane_id: String,
         workspace_id: String,
@@ -492,6 +520,10 @@ pub enum EventData {
         workspace_id: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         agent: Option<String>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        released: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        final_status: Option<AgentStatus>,
     },
     PaneAgentStatusChanged {
         pane_id: String,
@@ -503,8 +535,6 @@ pub enum EventData {
         title: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         display_agent: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        custom_status: Option<String>,
         #[serde(default, skip_serializing_if = "HashMap::is_empty")]
         state_labels: HashMap<String, String>,
     },

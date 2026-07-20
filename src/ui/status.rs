@@ -17,7 +17,7 @@ use crate::{
 // Fixed, high-contrast status colors so the four agent states stay visually
 // distinct on every theme (several themes, e.g. vesper, collapse mauve/peach/
 // yellow into one peach hue) and readable over a transparent background.
-const STATE_BLOCKED: Color = Color::Rgb(255, 96, 96); // red
+pub(super) const STATE_BLOCKED: Color = Color::Rgb(255, 96, 96); // red
 const STATE_WORKING: Color = Color::Rgb(240, 200, 92); // yellow
 const STATE_WAITING: Color = Color::Rgb(96, 165, 250); // blue
 const STATE_DONE: Color = Color::Rgb(196, 156, 255); // purple
@@ -188,7 +188,7 @@ pub(super) fn render_config_diagnostic(frame: &mut Frame, area: Rect, message: &
         .take(area.height as usize)
         .enumerate()
     {
-        let text = format!(" config warning: {line} ");
+        let text = format!(" {line} ");
         let width = (text.len() as u16).min(area.width);
         let notif_area = Rect::new(
             area.x + area.width.saturating_sub(width),

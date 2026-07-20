@@ -2,7 +2,7 @@ use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph},
+    widgets::{Block, Borders, Clear, Paragraph},
     Frame,
 };
 
@@ -14,6 +14,7 @@ use super::widgets::panel_contrast_fg;
 use crate::app::state::Palette;
 use crate::app::{AppState, Mode};
 use crate::layout::PaneInfo;
+use crate::popup_size::resolve_popup_geometry;
 use crate::terminal::{TerminalRuntime, TerminalRuntimeRegistry};
 
 pub(crate) fn pane_is_scrolled_back(rt: &TerminalRuntime) -> bool {
@@ -296,21 +297,20 @@ pub(super) fn render_panes(
     app: &AppState,
     terminal_runtimes: &TerminalRuntimeRegistry,
     frame: &mut Frame,
-    area: Rect,
+    pane_infos: &[PaneInfo],
+    split_borders: &[crate::layout::SplitBorder],
 ) {
     let Some(ws_idx) = app.active else {
-        render_empty(app, frame, area);
         return;
     };
     let Some(ws) = app.workspaces.get(ws_idx) else {
-        render_empty(app, frame, area);
         return;
     };
 
     let multi_pane = ws.layout.pane_count() > 1;
     let terminal_active = app.mode == Mode::Terminal;
 
-    for info in &app.view.pane_infos {
+    for info in pane_infos {
         if let Some(rt) = app.runtime_for_pane_in_workspace(terminal_runtimes, ws_idx, info.id) {
             let show_cursor = info.is_focused
                 && terminal_active
@@ -331,6 +331,17 @@ pub(super) fn render_panes(
                 }
             }
 
+            let (copy_search_top, copy_search_bottom, copy_search_matches) =
+                validated_copy_mode_search_matches(app, info, rt);
+            render_copy_mode_search_highlights(
+                app,
+                frame,
+                info,
+                copy_search_top,
+                copy_search_bottom,
+                &copy_search_matches,
+                false,
+            );
             render_selection_highlight(
                 &app.selection,
                 frame,
@@ -340,11 +351,81 @@ pub(super) fn render_panes(
                 &app.palette,
                 app.host_terminal_theme,
             );
+            render_copy_mode_search_highlights(
+                app,
+                frame,
+                info,
+                copy_search_top,
+                copy_search_bottom,
+                &copy_search_matches,
+                true,
+            );
             render_copy_mode_cursor(app, frame, info);
         }
     }
 
-    render_pane_borders(app, ws, frame);
+    render_pane_borders(app, ws, pane_infos, split_borders, frame);
+}
+
+pub(crate) fn popup_pane_rects(app: &AppState, area: Rect) -> Option<(Rect, Rect)> {
+    let popup = app.popup_pane.as_ref()?;
+    resolve_popup_geometry(popup.width, popup.height, area)
+        .map(|geometry| (geometry.outer, geometry.inner))
+}
+
+pub(super) fn resize_popup_pane(
+    app: &AppState,
+    terminal_runtimes: &TerminalRuntimeRegistry,
+    area: Rect,
+    cell_size: crate::kitty_graphics::HostCellSize,
+) {
+    let Some(popup) = app.popup_pane.as_ref() else {
+        return;
+    };
+    let Some((_outer, inner)) = popup_pane_rects(app, area) else {
+        return;
+    };
+    if app.direct_attach_resize_locks.contains(&popup.terminal_id) {
+        return;
+    }
+    if let Some(rt) = terminal_runtimes.get(&popup.terminal_id) {
+        rt.resize(
+            inner.height,
+            inner.width,
+            cell_size.width_px,
+            cell_size.height_px,
+        );
+    }
+}
+
+pub(super) fn render_popup_pane(
+    app: &AppState,
+    terminal_runtimes: &TerminalRuntimeRegistry,
+    frame: &mut Frame,
+    area: Rect,
+) {
+    let Some(popup) = app.popup_pane.as_ref() else {
+        return;
+    };
+    let Some((outer, inner)) = popup_pane_rects(app, area) else {
+        return;
+    };
+    let Some(rt) = terminal_runtimes.get(&popup.terminal_id) else {
+        return;
+    };
+    let title = app
+        .terminals
+        .get(&popup.terminal_id)
+        .and_then(|terminal| terminal.manual_label.as_deref())
+        .unwrap_or("popup");
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(app.palette.accent))
+        .title(pane_border_title(title, outer.width, true).unwrap_or_default())
+        .style(Style::default().bg(app.palette.panel_bg));
+    frame.render_widget(Clear, outer);
+    frame.render_widget(block, outer);
+    rt.render(frame, inner, !pane_is_scrolled_back(rt));
 }
 
 #[derive(Clone, Copy, Default)]
@@ -355,22 +436,22 @@ struct LineCell {
     right: bool,
 }
 
-fn render_pane_borders(app: &AppState, ws: &crate::workspace::Workspace, frame: &mut Frame) {
-    if !app.pane_borders
-        || app
-            .view
-            .pane_infos
-            .iter()
-            .all(|info| info.borders.is_empty())
-    {
+fn render_pane_borders(
+    app: &AppState,
+    ws: &crate::workspace::Workspace,
+    pane_infos: &[PaneInfo],
+    split_borders: &[crate::layout::SplitBorder],
+    frame: &mut Frame,
+) {
+    if !app.pane_borders || pane_infos.iter().all(|info| info.borders.is_empty()) {
         return;
     }
 
     let mut cells = std::collections::HashMap::<(u16, u16), LineCell>::new();
-    for info in &app.view.pane_infos {
+    for info in pane_infos {
         add_pane_border_cells(&mut cells, info);
     }
-    add_split_border_cells(app, &mut cells);
+    add_split_border_cells(app.pane_gaps, split_borders, &mut cells);
 
     let buf = frame.buffer_mut();
     let area = buf.area;
@@ -382,9 +463,7 @@ fn render_pane_borders(app: &AppState, ws: &crate::workspace::Workspace, frame: 
         {
             continue;
         }
-        let focused = app
-            .view
-            .pane_infos
+        let focused = pane_infos
             .iter()
             .any(|info| info.is_focused && line_touches_pane(x, y, info, app.pane_gaps));
         let symbol = line_cell_symbol(line);
@@ -401,18 +480,19 @@ fn render_pane_borders(app: &AppState, ws: &crate::workspace::Workspace, frame: 
         cell.set_style(Style::default().fg(color));
     }
 
-    render_pane_border_titles(app, ws, frame);
+    render_pane_border_titles(app, ws, pane_infos, frame);
 }
 
 fn add_split_border_cells(
-    app: &AppState,
+    pane_gaps: bool,
+    split_borders: &[crate::layout::SplitBorder],
     cells: &mut std::collections::HashMap<(u16, u16), LineCell>,
 ) {
-    if app.pane_gaps {
+    if pane_gaps {
         return;
     }
 
-    for split in &app.view.split_borders {
+    for split in split_borders {
         match split.direction {
             ratatui::layout::Direction::Horizontal => {
                 let x = split.pos;
@@ -525,10 +605,15 @@ fn line_touches_pane(x: u16, y: u16, info: &PaneInfo, pane_gaps: bool) -> bool {
         || (x == shared_right && y == shared_bottom)
 }
 
-fn render_pane_border_titles(app: &AppState, ws: &crate::workspace::Workspace, frame: &mut Frame) {
+fn render_pane_border_titles(
+    app: &AppState,
+    ws: &crate::workspace::Workspace,
+    pane_infos: &[PaneInfo],
+    frame: &mut Frame,
+) {
     let buf = frame.buffer_mut();
     let area = buf.area;
-    for info in &app.view.pane_infos {
+    for info in pane_infos {
         if !info.borders.contains(Borders::TOP) || info.rect.width <= 4 {
             continue;
         }
@@ -598,7 +683,7 @@ fn render_copy_mode_cursor(app: &AppState, frame: &mut Frame, info: &PaneInfo) {
     if app.mode != Mode::Copy {
         return;
     }
-    let Some(copy_mode) = app.copy_mode else {
+    let Some(copy_mode) = app.copy_mode.as_ref() else {
         return;
     };
     if copy_mode.pane_id != info.id
@@ -617,6 +702,96 @@ fn render_copy_mode_cursor(app: &AppState, frame: &mut Frame, info: &PaneInfo) {
             .bg(app.palette.accent)
             .add_modifier(Modifier::BOLD),
     );
+}
+
+fn validated_copy_mode_search_matches(
+    app: &AppState,
+    info: &PaneInfo,
+    rt: &crate::terminal::TerminalRuntime,
+) -> (u32, u32, Vec<(usize, crate::pane::TerminalTextMatch)>) {
+    let Some(copy_mode) = app.copy_mode.as_ref() else {
+        return (0, 0, Vec::new());
+    };
+    if copy_mode.pane_id != info.id {
+        return (0, 0, Vec::new());
+    }
+    let Some(metrics) = rt.scroll_metrics() else {
+        return (0, 0, Vec::new());
+    };
+    let top = metrics
+        .max_offset_from_bottom
+        .saturating_sub(metrics.offset_from_bottom)
+        .min(u32::MAX as usize) as u32;
+    let bottom = top.saturating_add(u32::from(info.inner_rect.height.saturating_sub(1)));
+    let first_visible = copy_mode
+        .search
+        .matches
+        .partition_point(|text_match| text_match.end.row < top);
+    let visible = &copy_mode.search.matches[first_visible..];
+    let visible_len = visible.partition_point(|text_match| text_match.start.row <= bottom);
+    let candidates = visible[..visible_len].to_vec();
+    let validity = rt.text_matches_are_current(&candidates);
+
+    let matches = candidates
+        .into_iter()
+        .zip(validity)
+        .enumerate()
+        .filter_map(|(offset, (text_match, is_current))| {
+            is_current.then_some((first_visible + offset, text_match))
+        })
+        .collect();
+    (top, bottom, matches)
+}
+
+fn render_copy_mode_search_highlights(
+    app: &AppState,
+    frame: &mut Frame,
+    info: &PaneInfo,
+    top: u32,
+    bottom: u32,
+    matches: &[(usize, crate::pane::TerminalTextMatch)],
+    current_only: bool,
+) {
+    let Some(copy_mode) = app.copy_mode.as_ref() else {
+        return;
+    };
+    let current = copy_mode.search.current;
+    let style = if current_only {
+        Style::default()
+            .fg(panel_contrast_fg(&app.palette))
+            .bg(app.palette.accent)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default()
+            .fg(app.palette.text)
+            .bg(app.palette.surface1)
+    };
+
+    for &(index, text_match) in matches {
+        if (current == Some(index)) != current_only {
+            continue;
+        }
+        let start_row = text_match.start.row.max(top);
+        let end_row = text_match.end.row.min(bottom);
+        for absolute_row in start_row..=end_row {
+            let viewport_row = absolute_row.saturating_sub(top) as u16;
+            let start_col = if absolute_row == text_match.start.row {
+                text_match.start.col
+            } else {
+                0
+            };
+            let end_col = if absolute_row == text_match.end.row {
+                text_match.end.col
+            } else {
+                info.inner_rect.width.saturating_sub(1)
+            };
+            for col in start_col..=end_col.min(info.inner_rect.width.saturating_sub(1)) {
+                let x = info.inner_rect.x.saturating_add(col);
+                let y = info.inner_rect.y.saturating_add(viewport_row);
+                frame.buffer_mut()[(x, y)].set_style(style);
+            }
+        }
+    }
 }
 
 fn render_selection_highlight(
@@ -739,7 +914,7 @@ fn color_to_rgb(color: Color) -> Option<Rgb> {
     }
 }
 
-fn render_empty(app: &AppState, frame: &mut Frame, area: Rect) {
+pub(super) fn render_empty(app: &AppState, frame: &mut Frame, area: Rect) {
     let p = &app.palette;
     let lines = vec![
         Line::from(""),
@@ -789,6 +964,16 @@ mod tests {
     use crate::terminal::TerminalState;
     use crate::workspace::Workspace;
 
+    fn render_view_pane_borders(app: &AppState, ws: &Workspace, frame: &mut Frame) {
+        render_pane_borders(
+            app,
+            ws,
+            &app.view.pane_infos,
+            &app.view.split_borders,
+            frame,
+        );
+    }
+
     #[test]
     fn pane_border_title_trims_and_truncates() {
         assert_eq!(
@@ -824,8 +1009,10 @@ mod tests {
         let mut app = AppState::test_new();
         app.mode = Mode::Terminal;
         app.view.terminal_area = Rect::new(0, 0, 12, 3);
+        let ws = Workspace::test_new("test");
+        let pane_id = ws.tabs[0].root_pane;
         app.view.pane_infos = vec![PaneInfo {
-            id: PaneId::from_raw(1),
+            id: pane_id,
             rect: Rect::new(0, 0, 12, 3),
             inner_rect: Rect::default(),
             scrollbar_rect: None,
@@ -833,10 +1020,7 @@ mod tests {
             is_focused: false,
         }];
 
-        let ws = Workspace::test_new("test");
-        let terminal_id = ws.tabs[0].panes[&PaneId::from_raw(1)]
-            .attached_terminal_id
-            .clone();
+        let terminal_id = ws.tabs[0].panes[&pane_id].attached_terminal_id.clone();
         let mut terminal_state = TerminalState::new(terminal_id.clone(), "/tmp".into());
         terminal_state.set_manual_label("1 模块组织（已定）".into());
         app.terminals.insert(terminal_id, terminal_state);
@@ -844,7 +1028,7 @@ mod tests {
         let mut terminal =
             ratatui::Terminal::new(ratatui::backend::TestBackend::new(12, 3)).unwrap();
         terminal
-            .draw(|frame| render_pane_borders(&app, &ws, frame))
+            .draw(|frame| render_view_pane_borders(&app, &ws, frame))
             .unwrap();
 
         let buffer = terminal.backend().buffer();
@@ -1011,7 +1195,7 @@ mod tests {
             ratatui::Terminal::new(ratatui::backend::TestBackend::new(4, 4)).unwrap();
 
         terminal
-            .draw(|frame| render_pane_borders(&app, &ws, frame))
+            .draw(|frame| render_view_pane_borders(&app, &ws, frame))
             .unwrap();
 
         let buffer = terminal.backend().buffer();
@@ -1050,7 +1234,7 @@ mod tests {
             ratatui::Terminal::new(ratatui::backend::TestBackend::new(4, 3)).unwrap();
 
         terminal
-            .draw(|frame| render_pane_borders(&app, &ws, frame))
+            .draw(|frame| render_view_pane_borders(&app, &ws, frame))
             .unwrap();
 
         let buffer = terminal.backend().buffer();

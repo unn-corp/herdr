@@ -80,6 +80,67 @@ fn workspace_set_cwd_uses_dot_method_name_and_round_trips() {
 }
 
 #[test]
+fn agent_start_and_prompt_requests_round_trip() {
+    let start = Request {
+        id: "start".into(),
+        method: Method::AgentStart(AgentStartParams {
+            name: "reviewer".into(),
+            kind: "pi".into(),
+            pane_id: "w1:p2".into(),
+            args: vec!["--no-session".into()],
+            timeout_ms: Some(30_000),
+        }),
+    };
+    let start_json = serde_json::to_value(&start).unwrap();
+    assert_eq!(start_json["method"], "agent.start");
+    assert_eq!(start_json["params"]["pane_id"], "w1:p2");
+    assert_eq!(
+        serde_json::from_value::<Request>(start_json).unwrap(),
+        start
+    );
+
+    let prompt = Request {
+        id: "prompt".into(),
+        method: Method::AgentPrompt(AgentPromptParams {
+            target: "reviewer".into(),
+            text: "review this".into(),
+            wait: None,
+        }),
+    };
+    let prompt_json = serde_json::to_value(&prompt).unwrap();
+    assert_eq!(prompt_json["method"], "agent.prompt");
+    assert_eq!(
+        serde_json::from_value::<Request>(prompt_json).unwrap(),
+        prompt
+    );
+
+    let prompt_and_wait = Request {
+        id: "prompt-and-wait".into(),
+        method: Method::AgentPrompt(AgentPromptParams {
+            target: "reviewer".into(),
+            text: "review this".into(),
+            wait: Some(AgentPromptWaitOptions {
+                until: vec![AgentStatus::Idle, AgentStatus::Done],
+                timeout_ms: Some(120_000),
+            }),
+        }),
+    };
+    let prompt_and_wait_json = serde_json::to_value(&prompt_and_wait).unwrap();
+    assert_eq!(
+        prompt_and_wait_json["params"]["wait"]["until"],
+        serde_json::json!(["idle", "done"])
+    );
+    assert_eq!(
+        prompt_and_wait_json["params"]["wait"]["timeout_ms"],
+        120_000
+    );
+    assert_eq!(
+        serde_json::from_value::<Request>(prompt_and_wait_json).unwrap(),
+        prompt_and_wait
+    );
+}
+
+#[test]
 fn bundled_protocol_schema_refs_resolve_inside_bundle() {
     fn assert_no_standalone_refs(value: &serde_json::Value) {
         match value {
@@ -250,6 +311,49 @@ fn client_window_title_requests_round_trip() {
     assert_eq!(json["method"], "client.window_title.clear");
     let restored: Request = serde_json::from_value(json).unwrap();
     assert_eq!(restored, clear);
+}
+
+#[test]
+fn agent_view_requests_round_trip() {
+    let set_json = serde_json::json!({
+        "id": "view-set",
+        "method": "agent.view.set",
+        "params": {
+            "source": "example.views",
+            "label": "current + attention",
+            "filter": {
+                "op": "any",
+                "filters": [
+                    {
+                        "op": "eq",
+                        "field": "workspace_id",
+                        "value": {"context": "current_workspace_id"}
+                    },
+                    {
+                        "op": "in",
+                        "field": "status",
+                        "values": ["blocked", "done"]
+                    }
+                ]
+            },
+            "sort": [
+                {"field": "attention", "order": "desc"},
+                {"field": "state_change_seq", "order": "desc"}
+            ]
+        }
+    });
+    let request: Request = serde_json::from_value(set_json.clone()).unwrap();
+    assert!(matches!(request.method, Method::AgentViewSet(_)));
+    assert_eq!(serde_json::to_value(request).unwrap(), set_json);
+
+    let clear_json = serde_json::json!({
+        "id": "view-clear",
+        "method": "agent.view.clear",
+        "params": {"source": "example.views"}
+    });
+    let request: Request = serde_json::from_value(clear_json.clone()).unwrap();
+    assert!(matches!(request.method, Method::AgentViewClear(_)));
+    assert_eq!(serde_json::to_value(request).unwrap(), clear_json);
 }
 
 #[test]
@@ -448,6 +552,10 @@ fn subscribe_request_parses_parameterized_subscriptions() {
                     "type": "pane.agent_status_changed",
                     "pane_id": "p_1_1",
                     "agent_status": "done"
+                },
+                {
+                    "type": "pane.scroll_changed",
+                    "pane_id": "p_1_1"
                 }
             ]
         }
@@ -458,7 +566,7 @@ fn subscribe_request_parses_parameterized_subscriptions() {
     let Method::EventsSubscribe(params) = request.method else {
         panic!("wrong method parsed");
     };
-    assert_eq!(params.subscriptions.len(), 2);
+    assert_eq!(params.subscriptions.len(), 3);
     assert!(matches!(
         &params.subscriptions[0],
         Subscription::PaneOutputMatched {
@@ -475,6 +583,10 @@ fn subscribe_request_parses_parameterized_subscriptions() {
             pane_id,
             agent_status: Some(AgentStatus::Done),
         } if pane_id == "p_1_1"
+    ));
+    assert!(matches!(
+        &params.subscriptions[2],
+        Subscription::PaneScrollChanged { pane_id } if pane_id == "p_1_1"
     ));
 }
 
@@ -500,6 +612,27 @@ fn subscription_event_envelope_round_trips() {
 
     let json = serde_json::to_string(&event).unwrap();
     assert!(json.contains("\"event\":\"pane.output_matched\""));
+    let restored: SubscriptionEventEnvelope = serde_json::from_str(&json).unwrap();
+    assert_eq!(restored, event);
+}
+
+#[test]
+fn scroll_changed_subscription_event_round_trips() {
+    let event = SubscriptionEventEnvelope {
+        event: SubscriptionEventKind::ScrollChanged,
+        data: SubscriptionEventData::ScrollChanged(PaneScrollChangedEvent {
+            pane_id: "p_1_1".into(),
+            workspace_id: "w_1".into(),
+            scroll: PaneScrollInfo {
+                offset_from_bottom: 12,
+                max_offset_from_bottom: 240,
+                viewport_rows: 30,
+            },
+        }),
+    };
+
+    let json = serde_json::to_string(&event).unwrap();
+    assert!(json.contains("\"event\":\"pane.scroll_changed\""));
     let restored: SubscriptionEventEnvelope = serde_json::from_str(&json).unwrap();
     assert_eq!(restored, event);
 }
@@ -585,6 +718,7 @@ fn worktree_request_and_response_round_trip() {
                 tab_count: 1,
                 active_tab_id: "w_1:1".into(),
                 agent_status: AgentStatus::Unknown,
+                tokens: HashMap::new(),
                 worktree: Some(WorkspaceWorktreeInfo {
                     repo_key: "/repo/herdr/.git".into(),
                     repo_name: "herdr".into(),
@@ -613,12 +747,15 @@ fn worktree_request_and_response_round_trip() {
                 label: None,
                 agent: None,
                 title: None,
+                terminal_title: None,
+                terminal_title_stripped: None,
                 display_agent: None,
                 agent_status: AgentStatus::Unknown,
-                custom_status: None,
                 state_labels: HashMap::new(),
+                tokens: HashMap::new(),
                 agent_session: None,
                 usage: None,
+                scroll: None,
                 revision: 0,
             },
             worktree: WorktreeInfo {
@@ -668,6 +805,7 @@ fn worktree_lifecycle_events_round_trip() {
         tab_count: 1,
         active_tab_id: "w_2:1".into(),
         agent_status: AgentStatus::Unknown,
+        tokens: HashMap::new(),
         worktree: Some(WorkspaceWorktreeInfo {
             repo_key: "/repo/herdr/.git".into(),
             repo_name: "herdr".into(),
@@ -780,6 +918,7 @@ fn plugin_link_list_unlink_round_trip() {
             platforms: None,
             command: vec!["bun".into(), "install".into()],
         }],
+        startup: vec![],
         actions: vec![PluginManifestAction {
             id: "bootstrap".into(),
             title: "Bootstrap worktree".into(),
@@ -799,6 +938,8 @@ fn plugin_link_list_unlink_round_trip() {
             description: None,
             platforms: None,
             placement: PluginPanePlacement::Overlay,
+            width: None,
+            height: None,
             command: vec!["bun".into(), "run".into(), "board.ts".into()],
         }],
         link_handlers: vec![PluginManifestLinkHandler {
@@ -1021,12 +1162,15 @@ fn create_response_round_trips_with_root_pane() {
                 label: None,
                 agent: None,
                 title: None,
+                terminal_title: None,
+                terminal_title_stripped: None,
                 display_agent: None,
                 agent_status: AgentStatus::Unknown,
-                custom_status: None,
                 state_labels: HashMap::new(),
+                tokens: HashMap::new(),
                 agent_session: None,
                 usage: None,
+                scroll: None,
                 revision: 0,
             },
         },
@@ -1135,10 +1279,12 @@ fn plugin_pane_open_request_round_trips() {
         method: Method::PluginPaneOpen(PluginPaneOpenParams {
             plugin_id: "example.board".into(),
             entrypoint: "board".into(),
-            placement: Some(PluginPanePlacement::Zoomed),
+            placement: Some(PluginPanePlacement::Popup),
+            width: Some(crate::popup_size::PopupSize::Cells(90)),
+            height: Some(crate::popup_size::PopupSize::Percent(80)),
             workspace_id: None,
-            target_pane_id: Some("1-1".into()),
-            direction: Some(SplitDirection::Right),
+            target_pane_id: None,
+            direction: None,
             cwd: Some("/tmp".into()),
             focus: true,
             env: [("HERDR_ROLE".to_string(), "board".to_string())].into(),
@@ -1147,7 +1293,23 @@ fn plugin_pane_open_request_round_trips() {
 
     let json = serde_json::to_value(&request).unwrap();
     assert_eq!(json["method"], "plugin.pane.open");
+    assert_eq!(json["params"]["placement"], "popup");
+    assert_eq!(json["params"]["width"], 90);
+    assert_eq!(json["params"]["height"], "80%");
     assert_eq!(json["params"]["env"]["HERDR_ROLE"], "board");
     let restored: Request = serde_json::from_value(json).unwrap();
     assert_eq!(restored, request);
+}
+
+#[test]
+fn popup_close_request_round_trips() {
+    let request = Request {
+        id: "popup-close".into(),
+        method: Method::PopupClose(EmptyParams::default()),
+    };
+
+    let json = serde_json::to_value(request).unwrap();
+
+    assert_eq!(json["method"], "popup.close");
+    assert_eq!(json["params"], serde_json::json!({}));
 }

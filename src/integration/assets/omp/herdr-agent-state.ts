@@ -2,13 +2,15 @@
 // managed by herdr; reinstalling or updating the integration overwrites this file.
 // add custom hooks/plugins beside this file instead of editing it.
 // HERDR_INTEGRATION_ID=omp
-// HERDR_INTEGRATION_VERSION=4
+// HERDR_INTEGRATION_VERSION=6
 // @ts-nocheck
 
-import { createConnection } from "node:net";
+import net from "node:net";
 
 const HERDR_ENV = process.env.HERDR_ENV;
 const socketPath = process.env.HERDR_SOCKET_PATH;
+const socketEndpoint =
+  process.platform === "win32" && socketPath ? `\\\\.\\pipe\\${socketPath}` : socketPath;
 const paneId = process.env.HERDR_PANE_ID;
 const source = "herdr:omp";
 
@@ -18,28 +20,39 @@ function enabled() {
 
 let requestQueue = Promise.resolve();
 
-function sendRequestNow(request: unknown): Promise<void> {
+function sendRequestAttempt(request: unknown, timeoutMs: number): Promise<boolean> {
   if (!enabled()) {
-    return Promise.resolve();
+    return Promise.resolve(true);
   }
 
   return new Promise((resolve) => {
     let done = false;
-    const finish = () => {
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const finish = (delivered: boolean) => {
       if (done) return;
       done = true;
+      if (timeout) {
+        clearTimeout(timeout);
+      }
       socket.destroy();
-      resolve();
+      resolve(delivered);
     };
 
-    const socket = createConnection(socketPath!);
-    socket.on("error", finish);
+    const socket = net.createConnection(socketEndpoint!);
+    socket.on("error", () => finish(false));
     socket.on("connect", () => socket.write(`${JSON.stringify(request)}\n`));
-    socket.on("data", finish);
-    socket.on("end", finish);
-    const timeout = setTimeout(finish, 500);
+    socket.on("data", () => finish(true));
+    socket.on("end", () => finish(false));
+    timeout = setTimeout(() => finish(false), timeoutMs);
     timeout.unref?.();
   });
+}
+
+async function sendRequestNow(request: unknown): Promise<void> {
+  if (await sendRequestAttempt(request, 500)) {
+    return;
+  }
+  await sendRequestAttempt(request, 1500);
 }
 
 function sendRequest(request: unknown): Promise<void> {

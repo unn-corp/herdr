@@ -13,9 +13,9 @@ use crate::api::schema::{
     ResponseResult,
 };
 use crate::app::App;
+pub(super) use manifest::normalize_plugin_id;
 use manifest::{
-    effective_platforms, ensure_platform_supported, normalize_action_id, normalize_plugin_id,
-    normalize_plugin_source,
+    effective_platforms, ensure_platform_supported, normalize_action_id, normalize_plugin_source,
 };
 
 #[cfg(test)]
@@ -110,6 +110,7 @@ impl App {
                 }
                 return encode_error(id, "plugin_registry_save_failed", err.to_string());
             }
+            self.clear_agent_view_for_source(&format!("plugin:{plugin_id}"));
         }
         encode_success(id, ResponseResult::PluginUnlinked { plugin_id, removed })
     }
@@ -349,8 +350,25 @@ impl App {
             return encode_error(id, code, message);
         }
         let placement = params.placement.unwrap_or(pane.placement);
+        if placement != PluginPanePlacement::Popup
+            && (params.width.is_some() || params.height.is_some())
+        {
+            return encode_error(
+                id,
+                "invalid_params",
+                "width and height are only supported when placement is popup",
+            );
+        }
+        if placement == PluginPanePlacement::Popup && self.state.mode != crate::app::Mode::Terminal
+        {
+            return encode_error(
+                id,
+                "ui_busy",
+                "popup panes can only open from the normal workspace view",
+            );
+        }
         match placement {
-            PluginPanePlacement::Overlay => {
+            PluginPanePlacement::Overlay | PluginPanePlacement::Popup => {
                 if params.workspace_id.is_some()
                     || params.target_pane_id.is_some()
                     || params.direction.is_some()
@@ -358,7 +376,7 @@ impl App {
                     return encode_error(
                         id,
                         "invalid_params",
-                        "overlay plugin panes target the active pane",
+                        "overlay and popup plugin panes target the active pane",
                     );
                 }
             }
@@ -386,6 +404,7 @@ impl App {
             PluginPanePlacement::Overlay => {
                 self.open_plugin_overlay_pane(id, params, &plugin, pane)
             }
+            PluginPanePlacement::Popup => self.open_plugin_popup_pane(id, params, &plugin, pane),
             PluginPanePlacement::Split | PluginPanePlacement::Zoomed => {
                 self.open_plugin_split_pane(id, params, &plugin, pane, placement)
             }
@@ -405,7 +424,7 @@ impl App {
             return encode_error(id, "plugin_pane_not_found", "plugin pane not found");
         }
         self.state.focus_pane_in_workspace(ws_idx, pane_id);
-        self.state.mode = crate::app::Mode::Terminal;
+        self.state.settle_terminal_mode_after_focus();
         let Some(record) = self.state.plugin_panes.get(&pane_id).cloned() else {
             return encode_error(id, "plugin_pane_not_found", "plugin pane not found");
         };
@@ -575,6 +594,9 @@ impl App {
         let Some(plugin) = self.state.installed_plugins.get(&plugin_id).cloned() else {
             return encode_error(id, "plugin_not_found", "plugin not found");
         };
+        if !enabled {
+            self.clear_agent_view_for_source(&format!("plugin:{plugin_id}"));
+        }
         if enabled {
             encode_success(id, ResponseResult::PluginEnabled { plugin })
         } else {
@@ -659,7 +681,7 @@ fn manifest_actions(
 mod tests {
     use super::*;
     use crate::api::schema::{
-        Method, PluginSourceInfo, PluginSourceKind, Request, SuccessResponse,
+        Method, PaneListParams, PluginSourceInfo, PluginSourceKind, Request, SuccessResponse,
     };
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -920,6 +942,101 @@ platforms = ["linux", "macos", "windows"]
     }
 
     #[test]
+    fn plugin_manifest_preserves_whitespace_only_command_arguments() {
+        let root = unique_temp_path("plugin-whitespace-argv");
+        write_manifest_content(
+            &root,
+            r#"
+id = "example.whitespace-argv"
+name = "Whitespace argv"
+version = "0.1.0"
+min_herdr_version = "0.7.0"
+platforms = ["linux", "macos"]
+
+[[panes]]
+id = "cut"
+title = "Cut on tab"
+command = ["awk", "-F", "\t", " {print $1} "]
+"#,
+        );
+
+        let plugin = load_plugin_manifest(&root.display().to_string(), true)
+            .expect("literal whitespace argv elements should be valid");
+        assert_eq!(plugin.panes[0].command, ["awk", "-F", "\t", " {print $1} "]);
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn plugin_manifest_rejects_empty_command_elements() {
+        for (name, command) in [("array", "[]"), ("element", r#"["echo", ""]"#)] {
+            let root = unique_temp_path(&format!("plugin-empty-command-{name}"));
+            write_manifest_content(
+                &root,
+                &format!(
+                    r#"
+id = "example.empty-command-{name}"
+name = "Empty command {name}"
+version = "0.1.0"
+min_herdr_version = "0.7.0"
+platforms = ["linux", "macos"]
+
+[[panes]]
+id = "empty"
+title = "Empty command"
+command = {command}
+"#
+                ),
+            );
+
+            let result = load_plugin_manifest(&root.display().to_string(), true);
+            assert!(matches!(result, Err(("invalid_plugin_command", _))));
+
+            let _ = std::fs::remove_dir_all(root);
+        }
+    }
+
+    #[test]
+    fn plugin_manifest_preserves_legacy_event_order_with_exact_argv() {
+        let root = unique_temp_path("plugin-event-whitespace-order");
+        write_manifest_content(
+            &root,
+            r#"
+id = "example.event-whitespace-order"
+name = "Event whitespace order"
+version = "0.1.0"
+min_herdr_version = "0.7.0"
+platforms = ["linux", "macos"]
+
+[[events]]
+on = "workspace.created"
+command = ["echo", "!"]
+
+[[events]]
+on = "workspace.created"
+command = ["echo", " a"]
+
+[[events]]
+on = "workspace.created"
+command = ["echo", "a ", "first"]
+
+[[events]]
+on = "workspace.created"
+command = ["echo", " a", "first "]
+"#,
+        );
+
+        let plugin = load_plugin_manifest(&root.display().to_string(), true)
+            .expect("event commands with whitespace should load");
+        assert_eq!(plugin.events[0].command, ["echo", "!"]);
+        assert_eq!(plugin.events[1].command, ["echo", " a"]);
+        assert_eq!(plugin.events[2].command, ["echo", "a ", "first"]);
+        assert_eq!(plugin.events[3].command, ["echo", " a", "first "]);
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn plugin_link_rejects_invalid_github_source_path() {
         let mut app = test_app();
         let root = unique_temp_path("plugin-invalid-source");
@@ -982,6 +1099,24 @@ min_herdr_version = "999.0.0"
 platforms = ["linux", "macos", "windows"]
 "#,
                 "plugin_requires_newer_herdr",
+            ),
+            (
+                "plugin-non-popup-size",
+                r#"
+id = "example.non-popup-size"
+name = "Non Popup Size"
+version = "0.1.0"
+min_herdr_version = "0.6.10"
+platforms = ["linux", "macos", "windows"]
+
+[[panes]]
+id = "board"
+title = "Board"
+placement = "split"
+width = "80%"
+command = ["echo", "board"]
+"#,
+                "invalid_plugin_pane_size",
             ),
         ];
 
@@ -1081,6 +1216,38 @@ command = ["echo", "b"]
     }
 
     #[test]
+    fn startup_hook_manifest_loads() {
+        let root = unique_temp_path("plugin-startup-manifest");
+        write_manifest_content(
+            &root,
+            r#"
+id = "example.startup-manifest"
+name = "Startup Manifest"
+version = "0.1.0"
+min_herdr_version = "0.6.10"
+platforms = ["linux", "macos", "windows"]
+
+[[startup]]
+command = ["node", "restore.js"]
+platforms = ["linux", "macos"]
+"#,
+        );
+
+        let plugin = load_plugin_manifest(&root.display().to_string(), true).unwrap();
+
+        assert_eq!(plugin.startup.len(), 1);
+        assert_eq!(plugin.startup[0].command, ["node", "restore.js"]);
+        assert_eq!(
+            plugin.startup[0].platforms,
+            Some(vec![
+                crate::api::schema::PluginPlatform::Linux,
+                crate::api::schema::PluginPlatform::Macos,
+            ])
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn smoke_fixture_manifest_loads() {
         let plugin = load_plugin_manifest("tests/fixtures/plugin-smoke", true)
             .expect("smoke fixture should load");
@@ -1104,6 +1271,12 @@ command = ["echo", "b"]
         let root = unique_temp_path("plugin-enable-disable");
         write_manifest(&root);
         link_manifest(&mut app, &root);
+        app.state.agent_view_override = Some(crate::api::schema::AgentViewSetParams {
+            source: "plugin:example.worktree-bootstrap".into(),
+            label: None,
+            filter: None,
+            sort: Vec::new(),
+        });
 
         let disabled = app.handle_api_request(Request {
             id: "disable".into(),
@@ -1115,6 +1288,19 @@ command = ["echo", "b"]
             panic!("expected disabled response: {disabled}");
         };
         assert!(!plugin.enabled);
+        assert!(app.state.agent_view_override.is_none());
+        let delayed_restore = app.handle_api_request(Request {
+            id: "delayed-startup-restore".into(),
+            method: Method::AgentViewSet(crate::api::schema::AgentViewSetParams {
+                source: "plugin:example.worktree-bootstrap".into(),
+                label: None,
+                filter: None,
+                sort: Vec::new(),
+            }),
+        });
+        let delayed_restore: crate::api::schema::ErrorResponse =
+            serde_json::from_str(&delayed_restore).unwrap();
+        assert_eq!(delayed_restore.error.code, "plugin_disabled");
 
         let enabled = app.handle_api_request(Request {
             id: "enable".into(),
@@ -1139,6 +1325,8 @@ command = ["echo", "b"]
                 plugin_id: "example.missing".into(),
                 entrypoint: "ui".into(),
                 placement: Some(PluginPanePlacement::Split),
+                width: None,
+                height: None,
                 workspace_id: None,
                 target_pane_id: None,
                 direction: None,
@@ -1149,6 +1337,98 @@ command = ["echo", "b"]
         });
         let value: serde_json::Value = serde_json::from_str(&response).unwrap();
         assert_eq!(value["error"]["code"], "plugin_not_found");
+    }
+
+    #[test]
+    fn plugin_pane_open_rejects_popup_size_for_non_popup_placement() {
+        let mut app = test_app();
+        let root = unique_temp_path("plugin-pane-non-popup-size-param");
+        write_manifest(&root);
+        link_manifest(&mut app, &root);
+
+        let response = app.handle_api_request(Request {
+            id: "pane-open-size".into(),
+            method: Method::PluginPaneOpen(PluginPaneOpenParams {
+                plugin_id: "example.worktree-bootstrap".into(),
+                entrypoint: "board".into(),
+                placement: Some(PluginPanePlacement::Split),
+                width: Some(crate::popup_size::PopupSize::Percent(80)),
+                height: None,
+                workspace_id: None,
+                target_pane_id: None,
+                direction: Some(crate::api::schema::SplitDirection::Right),
+                cwd: None,
+                focus: false,
+                env: std::collections::HashMap::new(),
+            }),
+        });
+
+        let value: serde_json::Value = serde_json::from_str(&response).unwrap();
+        assert_eq!(value["error"]["code"], "invalid_params");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn plugin_pane_open_popup_preserves_existing_ui_modes() {
+        let mut app = test_app();
+        app.state.workspaces = vec![crate::workspace::Workspace::test_new("modal")];
+        app.state.ensure_test_terminals();
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        let root_pane = app.state.workspaces[0].tabs[0].root_pane;
+        let root = unique_temp_path("plugin-popup-ui-busy");
+        write_manifest(&root);
+        link_manifest(&mut app, &root);
+
+        let open_popup = |app: &mut App, id: &str| {
+            app.handle_api_request(Request {
+                id: id.into(),
+                method: Method::PluginPaneOpen(PluginPaneOpenParams {
+                    plugin_id: "example.worktree-bootstrap".into(),
+                    entrypoint: "board".into(),
+                    placement: Some(PluginPanePlacement::Popup),
+                    width: None,
+                    height: None,
+                    workspace_id: None,
+                    target_pane_id: None,
+                    direction: None,
+                    cwd: None,
+                    focus: true,
+                    env: std::collections::HashMap::new(),
+                }),
+            })
+        };
+
+        app.state.mode = crate::app::Mode::Settings;
+        app.state.settings.original_theme = Some("settings-theme".into());
+        let settings_response = open_popup(&mut app, "settings-popup");
+        let settings_error: serde_json::Value = serde_json::from_str(&settings_response).unwrap();
+        assert_eq!(settings_error["error"]["code"], "ui_busy");
+        assert_eq!(app.state.mode, crate::app::Mode::Settings);
+        assert_eq!(
+            app.state.settings.original_theme.as_deref(),
+            Some("settings-theme")
+        );
+        assert!(app.state.popup_pane.is_none());
+
+        let copy_mode = crate::app::state::CopyModeState {
+            pane_id: root_pane,
+            cursor_row: 2,
+            cursor_col: 3,
+            entry_offset_from_bottom: 4,
+            selection: None,
+            search: crate::app::state::CopyModeSearchState::default(),
+        };
+        app.state.mode = crate::app::Mode::Copy;
+        app.state.copy_mode = Some(copy_mode.clone());
+        let copy_response = open_popup(&mut app, "copy-popup");
+        let copy_error: serde_json::Value = serde_json::from_str(&copy_response).unwrap();
+        assert_eq!(copy_error["error"]["code"], "ui_busy");
+        assert_eq!(app.state.mode, crate::app::Mode::Copy);
+        assert_eq!(app.state.copy_mode, Some(copy_mode));
+        assert!(app.state.popup_pane.is_none());
+
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[cfg(unix)]
@@ -1164,6 +1444,11 @@ command = ["echo", "b"]
         app.state.active = Some(0);
         app.state.selected = 0;
         app.state.mode = crate::app::Mode::Terminal;
+        app.state.kitty_graphics_enabled = true;
+        app.state.host_cell_size = crate::kitty_graphics::HostCellSize {
+            width_px: 11,
+            height_px: 22,
+        };
         app.state.terminals.get_mut(&root_terminal).unwrap().cwd = "/tmp".into();
         let target_public_pane_id = app.public_pane_id(0, root_pane).unwrap();
 
@@ -1182,7 +1467,7 @@ platforms = ["linux", "macos"]
 [[panes]]
 id = "board"
 title = "Plugin Board"
-command = ["sh", "-c", "printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n' \"$PWD\" \"$HERDR_PLUGIN_ID\" \"$HERDR_PLUGIN_ENTRYPOINT_ID\" \"$HERDR_WORKSPACE_ID\" \"$HERDR_PANE_ID\" \"$HERDR_BIN_PATH\" \"$HERDR_PLUGIN_CONTEXT_JSON\" > {}"]
+command = ["sh", "-c", "printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n' \"$PWD\" \"$HERDR_PLUGIN_ID\" \"$HERDR_PLUGIN_ENTRYPOINT_ID\" \"$HERDR_WORKSPACE_ID\" \"$HERDR_PANE_ID\" \"$HERDR_BIN_PATH\" \"$HERDR_PLUGIN_CONTEXT_JSON\" \"${{HERDR_CELL_WIDTH_PX-unset}}\" \"${{HERDR_CELL_HEIGHT_PX-unset}}\" > {}"]
 "#,
                 capture.display()
             ),
@@ -1195,6 +1480,8 @@ command = ["sh", "-c", "printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n' \"$PWD\" \"$HERDR_
                 plugin_id: "example.pane".into(),
                 entrypoint: "board".into(),
                 placement: Some(PluginPanePlacement::Overlay),
+                width: None,
+                height: None,
                 workspace_id: None,
                 target_pane_id: None,
                 direction: None,
@@ -1254,6 +1541,8 @@ command = ["sh", "-c", "printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n' \"$PWD\" \"$HERDR_
             context.focused_pane_id.as_deref(),
             Some(target_public_pane_id.as_str())
         );
+        assert_eq!(lines.next(), Some("unset"));
+        assert_eq!(lines.next(), Some("unset"));
 
         for (_, runtime) in app.terminal_runtimes.drain() {
             runtime.shutdown();
@@ -1298,6 +1587,8 @@ command = ["sh", "-c", "printf '%s\n%s\n%s\n' \"$HERDR_PLUGIN_ROOT\" \"$HERDR_PL
                 plugin_id: "example.path-env".into(),
                 entrypoint: "board".into(),
                 placement: Some(PluginPanePlacement::Overlay),
+                width: None,
+                height: None,
                 workspace_id: None,
                 target_pane_id: None,
                 direction: None,
@@ -1399,6 +1690,8 @@ command = ["sh", "-c", "sleep 1"]
                 plugin_id: "example.tab".into(),
                 entrypoint: "board".into(),
                 placement: None,
+                width: None,
+                height: None,
                 workspace_id: None,
                 target_pane_id: None,
                 direction: None,
@@ -1480,6 +1773,8 @@ command = ["sh", "-c", "sleep 1"]
                 plugin_id: "example.split".into(),
                 entrypoint: "board".into(),
                 placement: Some(PluginPanePlacement::Zoomed),
+                width: None,
+                height: None,
                 workspace_id: None,
                 target_pane_id: None,
                 direction: Some(crate::api::schema::SplitDirection::Right),
@@ -1557,6 +1852,8 @@ command = ["sh", "-c", "sleep 1"]
                 plugin_id: "example.overlay".into(),
                 entrypoint: "board".into(),
                 placement: None,
+                width: None,
+                height: None,
                 workspace_id: None,
                 target_pane_id: None,
                 direction: None,
@@ -1584,6 +1881,114 @@ command = ["sh", "-c", "sleep 1"]
             crate::api::schema::EventData::LayoutUpdated { layout }
                 if layout.zoomed && layout.panes.len() == 2
         ));
+
+        for (_, runtime) in app.terminal_runtimes.drain() {
+            runtime.shutdown();
+        }
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn plugin_pane_open_popup_is_layout_neutral() {
+        let event_hub = crate::api::EventHub::default();
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            &crate::config::Config::default(),
+            true,
+            None,
+            api_rx,
+            event_hub.clone(),
+        );
+        app.state.workspaces = vec![crate::workspace::Workspace::test_new("plugin-popup")];
+        app.state.ensure_test_terminals();
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = crate::app::Mode::Terminal;
+        let root_pane = app.state.workspaces[0].tabs[0].root_pane;
+        let root_public = app.public_pane_id(0, root_pane).unwrap();
+
+        let root = unique_temp_path("plugin-pane-popup");
+        let env_capture = root.join("popup-env.txt");
+        let manifest = format!(
+            r#"
+id = "example.popup"
+name = "Popup Plugin"
+version = "0.1.0"
+min_herdr_version = "0.6.10"
+platforms = ["linux", "macos"]
+
+[[panes]]
+id = "board"
+title = "Plugin Popup"
+placement = "popup"
+width = "80%"
+height = "40%"
+command = ["sh", "-c", "printf %s ${{HERDR_PANE_ID-unset}} > '{}'; sleep 1"]
+"#,
+            env_capture.display()
+        );
+        write_manifest_content(&root, &manifest);
+        link_manifest(&mut app, &root);
+
+        let open = app.handle_api_request(Request {
+            id: "pane-open-popup".into(),
+            method: Method::PluginPaneOpen(PluginPaneOpenParams {
+                plugin_id: "example.popup".into(),
+                entrypoint: "board".into(),
+                placement: None,
+                width: None,
+                height: None,
+                workspace_id: None,
+                target_pane_id: None,
+                direction: None,
+                cwd: None,
+                focus: true,
+                env: std::collections::HashMap::new(),
+            }),
+        });
+        assert_eq!(response_result(&open), ResponseResult::Ok {});
+        assert_eq!(
+            read_capture_when_ready(&env_capture, || {
+                app.drain_internal_events();
+            }),
+            "unset"
+        );
+
+        let opened_pane_id = app.state.popup_pane.as_ref().unwrap().pane_id;
+        assert!(!app.state.plugin_panes.contains_key(&opened_pane_id));
+        app.state.assert_invariants_for_test();
+        app.state.view.terminal_area = ratatui::layout::Rect::new(0, 0, 100, 30);
+        let (outer, inner) = crate::ui::popup_pane_rects(&app.state, app.state.view.terminal_area)
+            .expect("popup rects");
+        assert_eq!((outer.width, outer.height), (80, 12));
+        assert_eq!((inner.width, inner.height), (77, 10));
+        assert_eq!(app.state.workspaces[0].tabs[0].layout.pane_count(), 1);
+        assert!(!app.state.workspaces[0].tabs[0].zoomed);
+
+        let pane_list = app.handle_api_request(Request {
+            id: "pane-list-popup".into(),
+            method: Method::PaneList(PaneListParams {
+                workspace_id: Some(app.public_workspace_id(0)),
+            }),
+        });
+        let ResponseResult::PaneList { panes } = response_result(&pane_list) else {
+            panic!("expected pane list response: {pane_list}");
+        };
+        assert_eq!(panes.len(), 1);
+        assert_eq!(panes[0].pane_id, root_public);
+        assert!(panes[0].focused);
+        assert_eq!(
+            app.current_plugin_context("popup-open").focused_pane_id,
+            Some(root_public)
+        );
+        assert!(event_hub.events_after(0).is_empty());
+
+        app.handle_internal_event(crate::events::AppEvent::PaneDied {
+            pane_id: opened_pane_id,
+        });
+        assert!(app.state.popup_pane.is_none());
+        assert!(event_hub.events_after(0).is_empty());
 
         for (_, runtime) in app.terminal_runtimes.drain() {
             runtime.shutdown();
@@ -1722,6 +2127,8 @@ command = ["sh", "-c", "sleep 1"]
                 plugin_id: "example.worktree-bootstrap".into(),
                 entrypoint: "board".into(),
                 placement: None,
+                width: None,
+                height: None,
                 workspace_id: None,
                 target_pane_id: None,
                 direction: None,
@@ -1910,6 +2317,43 @@ command = ["sh", "-c", "printf '%s\n%s\n%s' \"$HERDR_PLUGIN_ROOT\" \"$HERDR_PLUG
         let context = app.current_plugin_context("selection-test");
 
         assert_eq!(context.selected_text.as_deref(), Some("hello"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn startup_hooks_run_once_with_plugin_environment() {
+        let mut app = test_app();
+        let root = unique_temp_path("plugin-startup-hook");
+        let capture = root.join("startup.txt");
+        write_manifest_content(
+            &root,
+            &format!(
+                r#"
+id = "example.startup"
+name = "Startup"
+version = "0.1.0"
+min_herdr_version = "0.6.10"
+platforms = ["linux", "macos"]
+
+[[startup]]
+command = ["sh", "-c", "printf '%s:%s' \"$HERDR_PLUGIN_ID\" \"$HERDR_PLUGIN_EVENT\" > {}"]
+"#,
+                capture.display()
+            ),
+        );
+        link_manifest(&mut app, &root);
+
+        app.run_plugin_startup_hooks();
+
+        assert_eq!(
+            read_capture_when_ready(&capture, || {
+                app.drain_all_internal_events();
+            }),
+            "example.startup:startup"
+        );
+        let plugin = app.state.installed_plugins.get("example.startup").unwrap();
+        assert_eq!(plugin.startup.len(), 1);
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[cfg(unix)]
@@ -2369,7 +2813,6 @@ action = "missing"
                 agent: "codex".into(),
                 state: crate::api::schema::PaneAgentState::Working,
                 message: None,
-                custom_status: None,
                 seq: None,
                 agent_session_id: None,
                 agent_session_path: None,

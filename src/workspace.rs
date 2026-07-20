@@ -175,6 +175,8 @@ pub struct Workspace {
     /// User-set default cwd for new tabs/panes in this workspace. Raw path
     /// expression (may contain `~`); `None` inherits the global cwd policy.
     pub default_cwd: Option<String>,
+    pub(crate) metadata_tokens: crate::metadata_tokens::MetadataTokens,
+    pub(crate) metadata_token_sequences: HashMap<String, u64>,
     /// Public pane numbers within this workspace. Closed pane numbers are not reused.
     pub public_pane_numbers: HashMap<PaneId, usize>,
     pub(crate) next_public_pane_number: usize,
@@ -241,6 +243,8 @@ impl Workspace {
             cached_git_space: git_space_metadata(&identity_cwd),
             worktree_space: None,
             default_cwd: None,
+            metadata_tokens: crate::metadata_tokens::MetadataTokens::default(),
+            metadata_token_sequences: HashMap::new(),
             public_pane_numbers,
             next_public_pane_number: 2,
             next_public_tab_number: 2,
@@ -424,6 +428,8 @@ impl Workspace {
                 cached_git_space: None,
                 worktree_space: None,
                 default_cwd: None,
+                metadata_tokens: crate::metadata_tokens::MetadataTokens::default(),
+                metadata_token_sequences: HashMap::new(),
                 public_pane_numbers,
                 next_public_pane_number: 2,
                 next_public_tab_number: 2,
@@ -1240,6 +1246,8 @@ impl Workspace {
             cached_git_space: None,
             worktree_space: None,
             default_cwd: None,
+            metadata_tokens: crate::metadata_tokens::MetadataTokens::default(),
+            metadata_token_sequences: HashMap::new(),
             public_pane_numbers,
             next_public_pane_number: 2,
             next_public_tab_number: 2,

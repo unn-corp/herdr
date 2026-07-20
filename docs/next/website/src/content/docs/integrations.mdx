@@ -76,7 +76,7 @@ Herdr writes the bundled extension to:
 ~/.pi/agent/extensions/herdr-agent-state.ts
 ```
 
-If `PI_CODING_AGENT_DIR` is set, Herdr writes to `$PI_CODING_AGENT_DIR/extensions/herdr-agent-state.ts` instead. The extensions directory must already exist. Uninstall removes only that extension file.
+If `PI_CODING_AGENT_DIR` is set, Herdr writes to `$PI_CODING_AGENT_DIR/extensions/herdr-agent-state.ts` instead. Herdr creates the extensions directory when the Pi agent directory already exists. Uninstall removes only that extension file.
 
 ## OMP
 
@@ -92,7 +92,7 @@ Herdr writes the bundled extension to:
 ~/.omp/agent/extensions/herdr-omp-agent-state.ts
 ```
 
-If `PI_CODING_AGENT_DIR` is set, Herdr writes to `$PI_CODING_AGENT_DIR/extensions/herdr-omp-agent-state.ts` instead. The extensions directory must already exist. Uninstall removes only that extension file.
+If `PI_CODING_AGENT_DIR` is set, Herdr writes to `$PI_CODING_AGENT_DIR/extensions/herdr-omp-agent-state.ts` instead. Herdr creates the extensions directory when the OMP agent directory already exists. Uninstall removes only that extension file.
 
 The OMP integration reports `omp` as the agent label, lifecycle state, and native session identity through Herdr's socket API. It does not require native process detection for the `omp` executable, and Herdr can resume an OMP pane with `omp --resume=<session>` after a server restart.
 
@@ -258,19 +258,16 @@ Herdr resumes stored MastraCode threads with `mastracode --thread <id>`.
 
 ## Custom status labels
 
-Integrations can report a short visual label without changing the semantic state.
-
-For example, an agent can remain semantically `working` while showing `indexing` in the UI.
+Integrations report lifecycle state as semantic state only. For example, report an agent as `working` without adding display fields to the lifecycle report.
 
 ```bash
 herdr pane report-agent w1:p1 \
   --source custom:docs \
   --agent docs-bot \
-  --state working \
-  --custom-status indexing
+  --state working
 ```
 
-User hooks that run next to a Herdr-managed integration should use metadata instead of `report-agent`. Metadata changes presentation without taking over the integration's `idle`, `working`, `blocked`, or session restore authority. `--agent` guards the report so it only applies while that authoritative agent is active. `--applies-to-source` guards the report so it only applies while that lifecycle authority source is active. `--display-agent` changes the visible name.
+User hooks that run next to a Herdr-managed integration should use metadata instead of `report-agent`. Metadata changes presentation without taking over the integration's `idle`, `working`, `blocked`, or session restore authority. `--agent` and `--applies-to-source` guard only presentation fields (`--title`, `--display-agent`, and `--state-label`). Token patches always apply; their reporter owns clearing or TTL refresh. `--display-agent` changes the visible name.
 
 ```bash
 herdr pane report-metadata "$HERDR_PANE_ID" \
@@ -278,12 +275,12 @@ herdr pane report-metadata "$HERDR_PANE_ID" \
   --agent claude \
   --title "Refactor auth middleware" \
   --display-agent "Claude: auth" \
-  --custom-status "refactor auth" \
+  --token summary="refactor auth" \
   --state-label working="refactoring auth" \
   --ttl-ms 3600000
 ```
 
-Custom status and state labels are visual-only. Waits, notifications, and workspace rollups still use the semantic state.
+Tokens and state labels are visual-only. Waits, notifications, and workspace rollups still use the semantic state.
 
 ## Debug integration state
 

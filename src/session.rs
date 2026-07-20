@@ -11,7 +11,7 @@ pub const SESSION_ENV_VAR: &str = "HERDR_SESSION";
 pub const DEFAULT_SESSION_NAME: &str = "default";
 
 const MAX_SESSION_NAME_LEN: usize = 64;
-const STOP_WAIT_TIMEOUT: Duration = Duration::from_secs(2);
+const STOP_WAIT_TIMEOUT: Duration = Duration::from_secs(15);
 const STOP_WAIT_POLL: Duration = Duration::from_millis(25);
 const MIN_SOCKET_TIMEOUT: Duration = Duration::from_millis(1);
 
@@ -325,7 +325,7 @@ fn send_stop_request(
         return Ok(None);
     };
     if let Err(err) = stream.set_send_timeout(Some(write_timeout)) {
-        if err.kind() != std::io::ErrorKind::InvalidInput {
+        if !stop_timeout_error_allows_wait(&err) {
             return Err(err.to_string());
         }
     }
@@ -354,7 +354,7 @@ fn send_stop_request_inner(
         return Ok(None);
     };
     if let Err(err) = stream.set_recv_timeout(Some(read_timeout)) {
-        if err.kind() == std::io::ErrorKind::InvalidInput {
+        if stop_timeout_error_allows_wait(&err) {
             return Ok(None);
         }
         return Err(err);
@@ -366,6 +366,11 @@ fn send_stop_request_inner(
         return Ok(None);
     }
     Ok(Some(line))
+}
+
+fn stop_timeout_error_allows_wait(err: &std::io::Error) -> bool {
+    err.kind() == std::io::ErrorKind::InvalidInput
+        || (cfg!(windows) && err.kind() == std::io::ErrorKind::Unsupported)
 }
 
 fn stop_request_error_allows_wait(err: &std::io::Error) -> bool {
@@ -490,6 +495,11 @@ mod tests {
     }
 
     #[test]
+    fn stop_wait_timeout_allows_slow_graceful_shutdown() {
+        assert_eq!(STOP_WAIT_TIMEOUT, Duration::from_secs(15));
+    }
+
+    #[test]
     fn stop_request_errors_wait_for_socket_state() {
         for kind in [
             std::io::ErrorKind::BrokenPipe,
@@ -502,6 +512,20 @@ mod tests {
             let err = std::io::Error::from(kind);
             assert!(stop_request_error_allows_wait(&err), "{kind:?}");
         }
+    }
+
+    #[test]
+    fn stop_timeout_invalid_input_waits_for_socket_state() {
+        let err = std::io::Error::from(std::io::ErrorKind::InvalidInput);
+
+        assert!(stop_timeout_error_allows_wait(&err));
+    }
+
+    #[test]
+    fn stop_timeout_unsupported_waits_for_socket_state_only_on_windows() {
+        let err = std::io::Error::from(std::io::ErrorKind::Unsupported);
+
+        assert_eq!(stop_timeout_error_allows_wait(&err), cfg!(windows));
     }
 
     #[test]

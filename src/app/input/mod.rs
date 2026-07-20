@@ -1,6 +1,8 @@
 //! Input handling — translates crossterm key/mouse events into state mutations.
 
+use bytes::Bytes;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use tracing::warn;
 
 use crate::app::PaneClickState;
 use crate::input::TerminalKey;
@@ -47,9 +49,11 @@ mod terminal;
 pub(crate) use self::{
     modal::{
         handle_global_menu_key, handle_keybind_help_key, handle_navigator_key,
-        insert_navigator_search_text, insert_rename_input_text,
+        insert_navigator_search_text, insert_rename_input_text, open_new_workspace_dialog,
     },
-    navigate::terminal_direct_navigation_action,
+    navigate::{
+        terminal_direct_indexed_navigation_action, terminal_direct_non_indexed_navigation_action,
+    },
     settings::open_settings_at,
 };
 use self::{
@@ -68,6 +72,10 @@ use super::App;
 
 impl App {
     pub(super) async fn handle_key(&mut self, key: TerminalKey) {
+        if self.state.popup_pane.is_some() {
+            self.handle_terminal_key(key).await;
+            return;
+        }
         let key_event = key.as_key_event();
         if modal_paste_target_active(&self.state) && is_modal_paste_shortcut(&key_event) {
             if let Some(text) = crate::platform::read_clipboard_text() {
@@ -110,6 +118,14 @@ impl App {
     }
 
     pub(super) async fn handle_paste(&mut self, text: String) {
+        if self.state.popup_pane.is_some() {
+            if let Some(runtime) = self.popup_runtime() {
+                let _ = runtime.send_paste(text).await;
+            } else {
+                self.close_popup_pane();
+            }
+            return;
+        }
         if self.state.mode != Mode::Terminal {
             self.paste_into_active_text_input(&text);
             return;
@@ -152,6 +168,20 @@ impl App {
                     return false;
                 }
                 insert_navigator_search_text(&mut self.state, &self.terminal_runtimes, text);
+                true
+            }
+            Mode::Copy => {
+                let Some(prompt) = self
+                    .state
+                    .copy_mode
+                    .as_mut()
+                    .and_then(|copy_mode| copy_mode.search.prompt.as_mut())
+                else {
+                    return false;
+                };
+                prompt
+                    .query
+                    .extend(text.chars().filter(|ch| !ch.is_control()));
                 true
             }
             _ => false,
@@ -224,6 +254,10 @@ impl App {
     }
 
     pub(super) fn handle_mouse(&mut self, mouse: MouseEvent) {
+        if self.state.popup_pane.is_some() {
+            self.handle_popup_mouse(mouse);
+            return;
+        }
         if self.handle_overlay_mouse(mouse) {
             return;
         }
@@ -280,6 +314,9 @@ impl App {
             }
             if let Some(action) = self.state.handle_mouse(&mut self.terminal_runtimes, mouse) {
                 match action {
+                    MouseAction::NewWorkspace => {
+                        self.begin_tui_workspace_create("tui.mouse.workspace.create")
+                    }
                     MouseAction::Settings(action) => match action {
                         SettingsAction::SaveTheme(name) => self.save_theme(&name),
                         SettingsAction::SaveSound(enabled) => self.save_sound(enabled),
@@ -328,6 +365,15 @@ impl App {
                     }
                 }
             }
+            if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
+                && self
+                    .state
+                    .selection
+                    .as_ref()
+                    .is_none_or(crate::selection::Selection::is_in_progress)
+            {
+                self.selection_highlight_clear_deadline = None;
+            }
         }
         if previous_settings_section != crate::app::state::SettingsSection::Integrations
             && self.state.settings.section == crate::app::state::SettingsSection::Integrations
@@ -355,6 +401,62 @@ impl App {
         } else if self.selection_autoscroll_deadline.is_none() {
             self.selection_autoscroll_deadline =
                 Some(std::time::Instant::now() + super::SELECTION_AUTOSCROLL_INTERVAL);
+        }
+    }
+
+    fn handle_popup_mouse(&mut self, mouse: MouseEvent) {
+        let Some((_outer, inner)) =
+            crate::ui::popup_pane_rects(&self.state, self.state.view.terminal_area)
+        else {
+            return;
+        };
+        if mouse.column < inner.x
+            || mouse.column >= inner.x.saturating_add(inner.width)
+            || mouse.row < inner.y
+            || mouse.row >= inner.y.saturating_add(inner.height)
+        {
+            return;
+        }
+        let Some(rt) = self.popup_runtime() else {
+            self.close_popup_pane();
+            return;
+        };
+        let column = mouse.column.saturating_sub(inner.x);
+        let row = mouse.row.saturating_sub(inner.y);
+        let bytes = match mouse.kind {
+            MouseEventKind::ScrollUp
+            | MouseEventKind::ScrollDown
+            | MouseEventKind::ScrollLeft
+            | MouseEventKind::ScrollRight => match rt.wheel_routing() {
+                Some(crate::pane::WheelRouting::MouseReport) => {
+                    rt.encode_mouse_wheel(mouse.kind, column, row, mouse.modifiers)
+                }
+                Some(crate::pane::WheelRouting::AlternateScroll) => {
+                    rt.encode_alternate_scroll(mouse.kind)
+                }
+                Some(crate::pane::WheelRouting::HostScroll) | None => {
+                    let lines_per_notch = self.state.mouse_scroll_lines;
+                    match mouse.kind {
+                        MouseEventKind::ScrollUp => rt.scroll_up(lines_per_notch),
+                        MouseEventKind::ScrollDown => rt.scroll_down(lines_per_notch),
+                        _ => {}
+                    }
+                    return;
+                }
+            },
+            MouseEventKind::Down(_) | MouseEventKind::Up(_) | MouseEventKind::Drag(_) => {
+                rt.encode_mouse_button(mouse.kind, column, row, mouse.modifiers)
+            }
+            MouseEventKind::Moved => {
+                rt.encode_mouse_motion(mouse.kind, column, row, mouse.modifiers)
+            }
+        };
+        let Some(bytes) = bytes else {
+            return;
+        };
+        rt.scroll_reset();
+        if let Err(err) = rt.try_send_bytes(Bytes::from(bytes)) {
+            warn!(err = %err, kind = ?mouse.kind, "failed to forward popup mouse event");
         }
     }
 
@@ -514,6 +616,10 @@ pub(crate) fn modal_paste_target_active(state: &AppState) -> bool {
             .as_ref()
             .is_some_and(|open| open.search_focused),
         Mode::Navigator => state.navigator.search_focused,
+        Mode::Copy => state
+            .copy_mode
+            .as_ref()
+            .is_some_and(|copy_mode| copy_mode.search.prompt.is_some()),
         _ => false,
     }
 }
@@ -546,7 +652,8 @@ impl AppState {
             .and_then(|i| self.workspaces.get(i))
             .and_then(|ws| {
                 let tab = ws.active_tab()?;
-                tab.cwd_for_pane(tab.layout.focused(), &self.terminals, terminal_runtimes)
+                let pane_id = tab.layout.focused();
+                tab.follow_cwd_for_pane(pane_id, &self.terminals, terminal_runtimes)
             });
         let cwd = Some(super::creation::resolve_terminal_cwd(
             None,

@@ -4,7 +4,7 @@ use std::{
     fmt, fs,
     io::{Read, Write},
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::Stdio,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{agent_label, parse_agent_label, Agent};
 
-pub(crate) const MANIFEST_ENGINE_VERSION: u32 = 2;
+pub(crate) const MANIFEST_ENGINE_VERSION: u32 = 3;
 const DEFAULT_CATALOG_URL: &str = "https://herdr.dev/agent-detection/index.toml";
 const CATALOG_URL_ENV: &str = "HERDR_AGENT_DETECTION_MANIFEST_CATALOG_URL";
 const MAX_FETCH_BYTES: usize = 256 * 1024;
@@ -470,7 +470,7 @@ fn catalog_url() -> String {
 
 fn fetch_text(url: &str) -> Result<String, String> {
     let max_fetch_bytes = MAX_FETCH_BYTES.to_string();
-    let mut child = Command::new("curl")
+    let mut child = crate::noninteractive_process::curl_command()
         .args([
             "-sfL",
             "--retry",
@@ -614,7 +614,7 @@ contains = ["{contains}"]
     #[test]
     fn process_agent_manifest_commits_newer_manifest_atomically() {
         with_state_dir("commit-newer", || {
-            let content = remote_manifest("2026.06.10.5", "ready");
+            let content = remote_manifest("9999.01.01.1", "ready");
             let commit = process_agent_manifest(Agent::Codex, &content, 1)
                 .unwrap()
                 .unwrap();
@@ -622,7 +622,7 @@ contains = ["{contains}"]
             assert_eq!(commit.agent, Agent::Codex);
             assert_eq!(
                 commit.version,
-                ManifestVersion::parse("2026.06.10.5").unwrap()
+                ManifestVersion::parse("9999.01.01.1").unwrap()
             );
             assert_eq!(
                 fs::read_to_string(remote_manifest_path(Agent::Codex)).unwrap(),
@@ -652,7 +652,7 @@ path = "codex.toml"
             .unwrap();
             fs::write(
                 web_dir.join("codex.toml"),
-                remote_manifest("2026.06.10.5", "auto-update-ready"),
+                remote_manifest("9999.01.01.1", "auto-update-ready"),
             )
             .unwrap();
             std::env::set_var(
@@ -693,10 +693,10 @@ path = "codex.toml"
     #[test]
     fn process_agent_manifest_rejects_downgrade_and_keeps_cached_manifest() {
         with_state_dir("reject-downgrade", || {
-            let current = remote_manifest("2026.06.10.5", "current");
+            let current = remote_manifest("9999.01.01.1", "current");
             process_agent_manifest(Agent::Codex, &current, 1).unwrap();
 
-            let older = remote_manifest("2026.06.10.4", "older");
+            let older = remote_manifest("9999.01.01.0", "older");
             assert!(process_agent_manifest(Agent::Codex, &older, 2).is_err());
             assert_eq!(
                 fs::read_to_string(remote_manifest_path(Agent::Codex)).unwrap(),
@@ -708,10 +708,10 @@ path = "codex.toml"
     #[test]
     fn process_agent_manifest_rejects_equal_version_content_change() {
         with_state_dir("reject-equal-change", || {
-            let current = remote_manifest("2026.06.10.5", "current");
+            let current = remote_manifest("9999.01.01.1", "current");
             process_agent_manifest(Agent::Codex, &current, 1).unwrap();
 
-            let changed = remote_manifest("2026.06.10.5", "changed");
+            let changed = remote_manifest("9999.01.01.1", "changed");
             assert!(process_agent_manifest(Agent::Codex, &changed, 2).is_err());
             assert_eq!(
                 fs::read_to_string(remote_manifest_path(Agent::Codex)).unwrap(),
@@ -723,7 +723,7 @@ path = "codex.toml"
     #[test]
     fn process_agent_manifest_skips_same_version_same_content() {
         with_state_dir("skip-same", || {
-            let current = remote_manifest("2026.06.10.5", "current");
+            let current = remote_manifest("9999.01.01.1", "current");
             process_agent_manifest(Agent::Codex, &current, 1).unwrap();
 
             let result = process_agent_manifest(Agent::Codex, &current, 2).unwrap();

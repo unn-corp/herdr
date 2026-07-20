@@ -165,21 +165,21 @@ fn home_dir_uses_userprofile_when_home_is_missing() {
 
 #[cfg(windows)]
 #[test]
-fn windows_supports_only_cli_hook_integrations() {
+fn windows_supports_portable_integrations() {
     use crate::api::schema::IntegrationTarget;
 
-    assert!(!integration_target_supported(IntegrationTarget::Pi));
-    assert!(!integration_target_supported(IntegrationTarget::Omp));
-    assert!(!integration_target_supported(IntegrationTarget::Opencode));
-    assert!(!integration_target_supported(IntegrationTarget::Kilo));
     assert!(!integration_target_supported(IntegrationTarget::Hermes));
     assert!(!integration_target_supported(IntegrationTarget::Cursor));
     assert!(!integration_target_supported(IntegrationTarget::Devin));
     assert!(!integration_target_supported(IntegrationTarget::Mastracode));
 
+    assert!(integration_target_supported(IntegrationTarget::Pi));
+    assert!(integration_target_supported(IntegrationTarget::Omp));
     assert!(integration_target_supported(IntegrationTarget::Claude));
     assert!(integration_target_supported(IntegrationTarget::Codex));
     assert!(integration_target_supported(IntegrationTarget::Copilot));
+    assert!(integration_target_supported(IntegrationTarget::Opencode));
+    assert!(integration_target_supported(IntegrationTarget::Kilo));
     assert!(integration_target_supported(IntegrationTarget::Droid));
     assert!(integration_target_supported(IntegrationTarget::Kimi));
     assert!(integration_target_supported(IntegrationTarget::Qodercli));
@@ -187,7 +187,7 @@ fn windows_supports_only_cli_hook_integrations() {
 
 #[cfg(windows)]
 #[test]
-fn windows_does_not_offer_unsupported_integrations_even_when_commands_exist() {
+fn windows_availability_excludes_unsupported_integrations() {
     use crate::api::schema::IntegrationTarget;
 
     let _lock = integration_env_lock();
@@ -206,10 +206,10 @@ fn windows_does_not_offer_unsupported_integrations_even_when_commands_exist() {
     fs::write(bin.join("devin.cmd"), "@echo off\r\n").unwrap();
     fs::write(bin.join("mastracode.cmd"), "@echo off\r\n").unwrap();
 
-    assert!(!integration_target_available(IntegrationTarget::Pi));
-    assert!(!integration_target_available(IntegrationTarget::Omp));
-    assert!(!integration_target_available(IntegrationTarget::Opencode));
-    assert!(!integration_target_available(IntegrationTarget::Kilo));
+    assert!(integration_target_available(IntegrationTarget::Pi));
+    assert!(integration_target_available(IntegrationTarget::Omp));
+    assert!(integration_target_available(IntegrationTarget::Opencode));
+    assert!(integration_target_available(IntegrationTarget::Kilo));
     assert!(!integration_target_available(IntegrationTarget::Hermes));
     assert!(!integration_target_available(IntegrationTarget::Cursor));
     assert!(!integration_target_available(IntegrationTarget::Devin));
@@ -238,10 +238,10 @@ fn windows_install_rejects_unsupported_integration_before_config_lookup() {
     std::env::remove_var("HOMEDRIVE");
     std::env::remove_var("HOMEPATH");
 
-    let err = install_target(IntegrationTarget::Pi).unwrap_err();
+    let err = install_target(IntegrationTarget::Hermes).unwrap_err();
     assert_eq!(
         err.to_string(),
-        "pi integration is not supported on Windows"
+        "hermes integration is not supported on Windows"
     );
 
     if let Some(home) = original_home {
@@ -481,6 +481,27 @@ fn install_pi_writes_embedded_asset_to_pi_extensions_dir() {
 
     assert_eq!(path, ext_dir.join(PI_EXTENSION_INSTALL_NAME));
     assert_eq!(content, PI_EXTENSION_ASSET);
+
+    std::env::remove_var("HOME");
+    let _ = fs::remove_dir_all(base);
+}
+
+#[test]
+fn install_pi_creates_extensions_dir_when_agent_dir_exists() {
+    let _lock = integration_env_lock();
+    let base = unique_base();
+    let home = base.join("home");
+    let agent_dir = home.join(".pi/agent");
+    fs::create_dir_all(&agent_dir).unwrap();
+    std::env::set_var("HOME", &home);
+
+    let path = install_pi().unwrap();
+
+    assert_eq!(
+        path,
+        agent_dir.join("extensions").join(PI_EXTENSION_INSTALL_NAME)
+    );
+    assert!(path.is_file());
 
     std::env::remove_var("HOME");
     let _ = fs::remove_dir_all(base);
@@ -727,6 +748,66 @@ fn outdated_integrations_treat_missing_version_marker_as_legacy() {
     assert_eq!(outdated[0].path, extension_path);
     assert_eq!(outdated[0].installed_version, None);
     assert_eq!(outdated[0].expected_version, PI_INTEGRATION_VERSION);
+
+    std::env::remove_var("HOME");
+    let _ = fs::remove_dir_all(base);
+}
+
+#[test]
+fn outdated_integrations_detect_previous_pi_version() {
+    let _lock = integration_env_lock();
+    let base = unique_base();
+    let home = base.join("home");
+    let ext_dir = home.join(".pi/agent/extensions");
+    fs::create_dir_all(&ext_dir).unwrap();
+    let extension_path = ext_dir.join(PI_EXTENSION_INSTALL_NAME);
+    fs::write(
+        &extension_path,
+        "// HERDR_INTEGRATION_ID=pi\n// HERDR_INTEGRATION_VERSION=4\n",
+    )
+    .unwrap();
+    std::env::set_var("HOME", &home);
+
+    let outdated = outdated_installed_integrations();
+
+    assert_eq!(outdated.len(), 1);
+    assert_eq!(
+        outdated[0].target,
+        crate::api::schema::IntegrationTarget::Pi
+    );
+    assert_eq!(outdated[0].path, extension_path);
+    assert_eq!(outdated[0].installed_version, Some(4));
+    assert_eq!(outdated[0].expected_version, PI_INTEGRATION_VERSION);
+
+    std::env::remove_var("HOME");
+    let _ = fs::remove_dir_all(base);
+}
+
+#[test]
+fn outdated_integrations_detect_previous_omp_version() {
+    let _lock = integration_env_lock();
+    let base = unique_base();
+    let home = base.join("home");
+    let ext_dir = home.join(".omp/agent/extensions");
+    fs::create_dir_all(&ext_dir).unwrap();
+    let extension_path = ext_dir.join(OMP_EXTENSION_INSTALL_NAME);
+    fs::write(
+        &extension_path,
+        "// HERDR_INTEGRATION_ID=omp\n// HERDR_INTEGRATION_VERSION=4\n",
+    )
+    .unwrap();
+    std::env::set_var("HOME", &home);
+
+    let outdated = outdated_installed_integrations();
+
+    assert_eq!(outdated.len(), 1);
+    assert_eq!(
+        outdated[0].target,
+        crate::api::schema::IntegrationTarget::Omp
+    );
+    assert_eq!(outdated[0].path, extension_path);
+    assert_eq!(outdated[0].installed_version, Some(4));
+    assert_eq!(outdated[0].expected_version, OMP_INTEGRATION_VERSION);
 
     std::env::remove_var("HOME");
     let _ = fs::remove_dir_all(base);
@@ -2480,6 +2561,48 @@ fn install_hermes_errors_when_config_dir_missing() {
 
     std::env::remove_var("HOME");
     let _ = fs::remove_dir_all(base);
+}
+
+#[test]
+fn bundled_integration_asset_versions_match_expected_versions() {
+    for (name, asset, expected_version) in [
+        ("pi", PI_EXTENSION_ASSET, PI_INTEGRATION_VERSION),
+        ("omp", OMP_EXTENSION_ASSET, OMP_INTEGRATION_VERSION),
+        ("claude", CLAUDE_HOOK_ASSET, CLAUDE_INTEGRATION_VERSION),
+        ("codex", CODEX_HOOK_ASSET, CODEX_INTEGRATION_VERSION),
+        ("kimi", KIMI_HOOK_ASSET, KIMI_INTEGRATION_VERSION),
+        ("copilot", COPILOT_HOOK_ASSET, COPILOT_INTEGRATION_VERSION),
+        ("devin", DEVIN_HOOK_ASSET, DEVIN_INTEGRATION_VERSION),
+        ("droid", DROID_HOOK_ASSET, DROID_INTEGRATION_VERSION),
+        (
+            "opencode",
+            OPENCODE_PLUGIN_ASSET,
+            OPENCODE_INTEGRATION_VERSION,
+        ),
+        ("kilo", KILO_PLUGIN_ASSET, KILO_INTEGRATION_VERSION),
+        (
+            "hermes",
+            HERMES_PLUGIN_INIT_ASSET,
+            HERMES_INTEGRATION_VERSION,
+        ),
+        (
+            "qodercli",
+            QODERCLI_HOOK_ASSET,
+            QODERCLI_INTEGRATION_VERSION,
+        ),
+        ("cursor", CURSOR_HOOK_ASSET, CURSOR_INTEGRATION_VERSION),
+        (
+            "mastracode",
+            MASTRACODE_HOOK_ASSET,
+            MASTRACODE_INTEGRATION_VERSION,
+        ),
+    ] {
+        assert_eq!(
+            parse_integration_version(asset),
+            Some(expected_version),
+            "{name} asset version must match its integration version constant"
+        );
+    }
 }
 
 #[test]
