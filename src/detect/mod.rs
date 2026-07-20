@@ -351,9 +351,20 @@ fn normalized_process_name(process: &crate::platform::ForegroundProcess) -> Stri
 /// full-screen agent that keeps the terminal, so an agent waiting on a deploy
 /// or build surfaces as `Waiting` too.
 pub fn has_wait_command_descendant(root_pid: u32) -> bool {
+    wait_command_descendant_pid(root_pid).is_some()
+}
+
+/// PID of the first descendant running a long-running wait command, if any.
+///
+/// Callers track this PID across scans to tell a genuine wait from a polling
+/// loop: `sleep 300` keeps ONE pid alive, while `while ...; do sleep 0.05; done`
+/// always has *a* sleep running but under a NEW pid every iteration. Without
+/// that distinction a 50ms poll looks identical to a long download.
+pub fn wait_command_descendant_pid(root_pid: u32) -> Option<u32> {
     crate::platform::descendant_processes(root_pid)
         .iter()
-        .any(process_is_wait_command)
+        .find(|process| process_is_wait_command(process))
+        .map(|process| process.pid)
 }
 
 fn process_is_wait_command(process: &crate::platform::ForegroundProcess) -> bool {

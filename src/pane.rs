@@ -341,6 +341,83 @@ fn foreground_group_changed(
         && (foreground_pgid.is_some() || last_foreground_pgid.is_some())
 }
 
+/// What the wait-command check concluded for one detection tick.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WaitOutcome {
+    /// Nothing to do; carry on with normal detection.
+    None,
+    /// Hold `Waiting`: a long-running command is confirmed under this pane.
+    Waiting,
+    /// A previously held `Waiting` no longer applies; fall back to `Unknown`.
+    Cleared,
+}
+
+/// Tracks the "blocked on a long-running command" signal for one pane.
+///
+/// Shared by both detection loops. The waiting feature originally lived only in
+/// the handoff loop, so normally-spawned panes never reported `Waiting`; keeping
+/// the rule here means neither loop can drift from the other again.
+///
+/// Two rules keep it honest:
+/// - **Same PID across two scans.** A polling loop (`while ...; do sleep 0.05;
+///   done`) always has *a* sleep alive but respawns it under a new pid, so it
+///   never confirms. A real `sleep 300` / `curl` / `cargo build` keeps one pid.
+/// - **Shells only.** Agents report their own lifecycle through hooks, and
+///   short-circuiting detection for them fights the screen detector.
+#[derive(Debug, Default)]
+pub(crate) struct WaitCommandTracker {
+    last_scan_at: Option<std::time::Instant>,
+    /// Wait-command pid seen on the previous scan.
+    previous_pid: Option<u32>,
+    /// Set once the same pid survived two consecutive scans.
+    confirmed: bool,
+}
+
+impl WaitCommandTracker {
+    pub(crate) fn reset(&mut self) {
+        self.last_scan_at = None;
+        self.previous_pid = None;
+        self.confirmed = false;
+    }
+
+    /// Re-scan at most once per `interval`, then decide. `lookup` returns the
+    /// pid of a wait command under the pane, if one is running.
+    pub(crate) fn evaluate(
+        &mut self,
+        now: std::time::Instant,
+        interval: std::time::Duration,
+        agent: Option<crate::detect::Agent>,
+        state: AgentState,
+        lookup: impl FnOnce() -> Option<u32>,
+    ) -> WaitOutcome {
+        if self
+            .last_scan_at
+            .is_none_or(|scanned| now.duration_since(scanned) >= interval)
+        {
+            self.last_scan_at = Some(now);
+            let current = lookup();
+            // Confirm only when the SAME process is still there next scan.
+            self.confirmed = match (current, self.previous_pid) {
+                (Some(pid), Some(previous)) => pid == previous,
+                _ => false,
+            };
+            self.previous_pid = current;
+        }
+
+        // Agents own their state via lifecycle hooks; never pre-empt them.
+        if agent.is_some() {
+            return WaitOutcome::None;
+        }
+        if self.confirmed {
+            return WaitOutcome::Waiting;
+        }
+        if state == AgentState::Waiting {
+            return WaitOutcome::Cleared;
+        }
+        WaitOutcome::None
+    }
+}
+
 fn should_skip_process_probe_for_lifecycle_authority(
     full_lifecycle_authority_active: bool,
     input: ProcessProbeInput,
@@ -589,8 +666,7 @@ fn spawn_basic_detection_task(
         let mut last_visible_signal_refresh = None;
         let mut last_process_check = std::time::Instant::now();
         let mut last_foreground_pgid = None;
-        let mut last_wait_descendant = false;
-        let mut last_wait_scan_at: Option<std::time::Instant> = None;
+        let mut wait_tracker = WaitCommandTracker::default();
         let mut has_process_probe = false;
         let mut acquisition_started_at = None;
         let mut last_content_change_at = None;
@@ -619,8 +695,7 @@ fn spawn_basic_detection_task(
                     last_visible_signal_refresh = None;
                     last_process_check = std::time::Instant::now();
                     last_foreground_pgid = None;
-                    last_wait_descendant = false;
-                    last_wait_scan_at = None;
+                    wait_tracker.reset();
                     has_process_probe = false;
                     acquisition_started_at = None;
                     last_content_change_at = None;
@@ -762,20 +837,22 @@ fn spawn_basic_detection_task(
             // once it clears, agents resume normal detection and shells revert
             // to Unknown. Waiting ranks below working in attention priority.
             if !lifecycle_authority_active && pid > 0 {
-                if last_wait_scan_at.is_none_or(|scanned| {
-                    now.duration_since(scanned) >= WAIT_DESCENDANT_SCAN_INTERVAL
-                }) {
-                    last_wait_scan_at = Some(now);
-                    last_wait_descendant = crate::detect::has_wait_command_descendant(pid);
-                }
-                if last_wait_descendant {
-                    if state != AgentState::Waiting {
-                        state = AgentState::Waiting;
+                let outcome =
+                    wait_tracker.evaluate(now, WAIT_DESCENDANT_SCAN_INTERVAL, agent, state, || {
+                        crate::detect::wait_command_descendant_pid(pid)
+                    });
+                if let Some(next) = match outcome {
+                    WaitOutcome::Waiting => Some(AgentState::Waiting),
+                    WaitOutcome::Cleared => Some(AgentState::Unknown),
+                    WaitOutcome::None => None,
+                } {
+                    if state != next {
+                        state = next;
                         publish_state_changed_event(
                             state_events.clone(),
                             pane_id,
                             agent,
-                            AgentState::Waiting,
+                            next,
                             false,
                             false,
                             false,
@@ -783,22 +860,6 @@ fn spawn_basic_detection_task(
                         )
                         .await;
                     }
-                    pending_idle.clear();
-                    continue;
-                }
-                if agent.is_none() && state == AgentState::Waiting {
-                    state = AgentState::Unknown;
-                    publish_state_changed_event(
-                        state_events.clone(),
-                        pane_id,
-                        None,
-                        AgentState::Unknown,
-                        false,
-                        false,
-                        false,
-                        now,
-                    )
-                    .await;
                     pending_idle.clear();
                     continue;
                 }
@@ -2045,6 +2106,7 @@ impl PaneRuntime {
                 let mut last_visible_idle = initial_state.detected_agent.is_some();
                 let mut last_process_check = Instant::now();
                 let mut last_foreground_pgid = None;
+                let mut wait_tracker = WaitCommandTracker::default();
                 let mut has_process_probe = false;
                 let mut acquisition_started_at = None;
                 let mut last_content_change_at = None;
@@ -2083,6 +2145,7 @@ impl PaneRuntime {
                             state = AgentState::Unknown;
                             last_visible_idle = false;
                             last_foreground_pgid = None;
+                            wait_tracker.reset();
                             has_process_probe = false;
                             acquisition_started_at = None;
                             last_content_change_at = None;
@@ -2254,6 +2317,40 @@ impl PaneRuntime {
                     if pid > 0 && terminal.maybe_restore_host_terminal_theme(pane_id, pid) {
                         if !render_dirty.swap(true, Ordering::AcqRel) {
                             render_notify.notify_one();
+                        }
+                    }
+
+                    // Same wait-command rule as the handoff loop. Normally-spawned
+                    // panes run THIS loop, so the check must live here too.
+                    if !lifecycle_authority_active && pid > 0 {
+                        let outcome = wait_tracker.evaluate(
+                            now,
+                            WAIT_DESCENDANT_SCAN_INTERVAL,
+                            agent,
+                            state,
+                            || crate::detect::wait_command_descendant_pid(pid),
+                        );
+                        if let Some(next) = match outcome {
+                            WaitOutcome::Waiting => Some(AgentState::Waiting),
+                            WaitOutcome::Cleared => Some(AgentState::Unknown),
+                            WaitOutcome::None => None,
+                        } {
+                            if state != next {
+                                state = next;
+                                publish_state_changed_event(
+                                    state_events.clone(),
+                                    pane_id,
+                                    agent,
+                                    next,
+                                    false,
+                                    false,
+                                    false,
+                                    now,
+                                )
+                                .await;
+                            }
+                            pending_idle.clear();
+                            continue;
                         }
                     }
 
@@ -2880,6 +2977,121 @@ impl PaneRuntime {
 
 #[cfg(test)]
 mod tests {
+    use super::{WaitCommandTracker, WaitOutcome};
+
+    const IVL: std::time::Duration = std::time::Duration::from_millis(800);
+
+    /// A polling loop always has *a* sleep alive but respawns it under a new pid
+    /// each iteration. That must never confirm as Waiting, or every
+    /// `while ...; do sleep 0.05; done` shell looks blocked.
+    #[test]
+    fn wait_tracker_ignores_a_polling_loop_that_churns_pids() {
+        let mut t = WaitCommandTracker::default();
+        let mut now = std::time::Instant::now();
+        for pid in 1000..1010u32 {
+            let out = t.evaluate(now, IVL, None, AgentState::Unknown, || Some(pid));
+            assert_eq!(
+                out,
+                WaitOutcome::None,
+                "churning pid {pid} must not confirm"
+            );
+            now += IVL;
+        }
+    }
+
+    /// One long-running command keeps a single pid, so it confirms on the
+    /// second consecutive scan and holds thereafter.
+    #[test]
+    fn wait_tracker_confirms_one_pid_that_persists() {
+        let mut t = WaitCommandTracker::default();
+        let mut now = std::time::Instant::now();
+        assert_eq!(
+            t.evaluate(now, IVL, None, AgentState::Unknown, || Some(4242)),
+            WaitOutcome::None,
+            "first sighting alone is not enough"
+        );
+        now += IVL;
+        assert_eq!(
+            t.evaluate(now, IVL, None, AgentState::Unknown, || Some(4242)),
+            WaitOutcome::Waiting
+        );
+        now += IVL;
+        assert_eq!(
+            t.evaluate(now, IVL, None, AgentState::Waiting, || Some(4242)),
+            WaitOutcome::Waiting
+        );
+    }
+
+    /// When the command finishes, a held Waiting falls back to Unknown.
+    #[test]
+    fn wait_tracker_clears_when_the_command_exits() {
+        let mut t = WaitCommandTracker::default();
+        let mut now = std::time::Instant::now();
+        t.evaluate(now, IVL, None, AgentState::Unknown, || Some(77));
+        now += IVL;
+        assert_eq!(
+            t.evaluate(now, IVL, None, AgentState::Unknown, || Some(77)),
+            WaitOutcome::Waiting
+        );
+        now += IVL;
+        assert_eq!(
+            t.evaluate(now, IVL, None, AgentState::Waiting, || None),
+            WaitOutcome::Cleared
+        );
+    }
+
+    /// Agents report state through their own lifecycle hooks; pre-empting them
+    /// suppressed screen detection and delayed their done transition.
+    #[test]
+    fn wait_tracker_never_pre_empts_an_agent() {
+        let mut t = WaitCommandTracker::default();
+        let mut now = std::time::Instant::now();
+        for _ in 0..3 {
+            let out = t.evaluate(
+                now,
+                IVL,
+                Some(crate::detect::Agent::Claude),
+                AgentState::Working,
+                || Some(999),
+            );
+            assert_eq!(out, WaitOutcome::None);
+            now += IVL;
+        }
+    }
+
+    /// A reset (pane restart) must not let a stale pid confirm immediately.
+    #[test]
+    fn wait_tracker_reset_requires_confirming_again() {
+        let mut t = WaitCommandTracker::default();
+        let mut now = std::time::Instant::now();
+        t.evaluate(now, IVL, None, AgentState::Unknown, || Some(5));
+        now += IVL;
+        assert_eq!(
+            t.evaluate(now, IVL, None, AgentState::Unknown, || Some(5)),
+            WaitOutcome::Waiting
+        );
+        t.reset();
+        now += IVL;
+        assert_eq!(
+            t.evaluate(now, IVL, None, AgentState::Unknown, || Some(5)),
+            WaitOutcome::None,
+            "after reset the pid must persist again before confirming"
+        );
+    }
+
+    /// Guard for the bug this fixes: the waiting rule lived only in the handoff
+    /// loop, so normally-spawned panes could never report Waiting. Both loops
+    /// must go through the same tracker.
+    #[test]
+    fn both_detection_loops_share_the_wait_tracker() {
+        let src = include_str!("pane.rs");
+        let uses = src.matches("wait_tracker.evaluate(").count();
+        assert!(
+            uses >= 2,
+            "expected both detection loops to consult WaitCommandTracker, found {uses}"
+        );
+    }
+
     use super::*;
 
     #[tokio::test]
